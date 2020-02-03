@@ -25,29 +25,40 @@ K4AROSBridgeNodelet::K4AROSBridgeNodelet() : Nodelet(), k4a_device(nullptr)
 
 K4AROSBridgeNodelet::~K4AROSBridgeNodelet()
 {
+
   k4a_device.reset();
 }
 
 void K4AROSBridgeNodelet::onInit()
 {
-  NODELET_INFO("K4A ROS Nodelet Start");
 
-  k4a_device = std::unique_ptr<K4AROSDevice>(new K4AROSDevice(getNodeHandle(), getPrivateNodeHandle()));
+    NODELET_INFO("K4A ROS Nodelet Start");
 
-  if (k4a_device->startCameras() != K4A_RESULT_SUCCEEDED)
-  {
-    k4a_device.reset(nullptr);
-    throw nodelet::Exception("Could not start K4A_ROS_Device!");
+    k4a_device = std::unique_ptr<K4AROSDevice>(new K4AROSDevice(getNodeHandle(), getPrivateNodeHandle()));
+
+
+    k4a_result_t cameraStatus =  k4a_device->startCameras();
+
+    if (cameraStatus != K4A_RESULT_SUCCEEDED)
+    {
+      k4a_device.reset(nullptr);
+      throw nodelet::Exception("Could not start K4A_ROS_Device!");
+    }
+    
+    NODELET_INFO("Cameras started");
+
+    k4a_result_t ImuStatus =  k4a_device->startImu();
+
+    if (ImuStatus != K4A_RESULT_SUCCEEDED)
+    {
+      k4a_device.reset(nullptr);
+      throw nodelet::Exception("Could not start K4A_ROS_Device!");
+    }
+
+    NODELET_INFO("IMU started");
+
+
+
   }
 
-  NODELET_INFO("Cameras started");
-
-  if (k4a_device->startImu() != K4A_RESULT_SUCCEEDED)
-  {
-    k4a_device.reset(nullptr);
-    throw nodelet::Exception("Could not start K4A_ROS_Device!");
-  }
-
-  NODELET_INFO("IMU started");
-}
 }  // namespace Azure_Kinect_ROS_Driver

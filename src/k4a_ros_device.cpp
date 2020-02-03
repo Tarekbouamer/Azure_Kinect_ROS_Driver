@@ -5,6 +5,7 @@
 //
 #include "azure_kinect_ros_driver/k4a_ros_device.h"
 
+
 // System headers
 //
 #include <thread>
@@ -19,6 +20,8 @@
 #include <sensor_msgs/point_cloud2_iterator.h>
 #include <k4a/k4a.hpp>
 
+
+
 // Project headers
 //
 #include "azure_kinect_ros_driver/k4a_ros_types.h"
@@ -32,9 +35,66 @@ using namespace std;
 using namespace visualization_msgs;
 #endif
 
+
+
+std::string syncStatus;
+
+
+
+
+
+
+/*
+* ####################################################################################################################################################
+*/ 
+#define VERIFY(result)                                                                                                 \
+    if (result != K4A_RESULT_SUCCEEDED)                                                                                \
+    {                                                                                                                  \
+        printf("%s \n - (File: %s, Function: %s, Line: %d)\n", #result " failed", __FILE__, __FUNCTION__, __LINE__);   \
+        exit(1);                                                                                                       \
+    }
+
+#define FOURCC(cc) ((cc)[0] | (cc)[1] << 8 | (cc)[2] << 16 | (cc)[3] << 24)
+
+
+typedef struct
+{
+    uint32_t biSize;
+    uint32_t biWidth;
+    uint32_t biHeight;
+    uint16_t biPlanes;
+    uint16_t biBitCount;
+    uint32_t biCompression;
+    uint32_t biSizeImage;
+    uint32_t biXPelsPerMeter;
+    uint32_t biYPelsPerMeter;
+    uint32_t biClrUsed;
+    uint32_t biClrImportant;
+} BITMAPINFOHEADER;
+
+
+void fill_bitmap_header(uint32_t width, uint32_t height, BITMAPINFOHEADER *out)
+{
+    out->biSize = sizeof(BITMAPINFOHEADER);
+    out->biWidth = width;
+    out->biHeight = height;
+    out->biPlanes = 1;
+    out->biBitCount = 16;
+    out->biCompression = FOURCC("YUY2");
+    out->biSizeImage = sizeof(uint16_t) * width * height;
+    out->biXPelsPerMeter = 0;
+    out->biYPelsPerMeter = 0;
+    out->biClrUsed = 0;
+    out->biClrImportant = 0;
+}
+/*
+* ####################################################################################################################################################
+*/
+
 K4AROSDevice::K4AROSDevice(const NodeHandle& n, const NodeHandle& p)
   : k4a_device_(nullptr),
     k4a_playback_handle_(nullptr),
+    k4a_recording_handle_(nullptr),
 // clang-format off
 #if defined(K4A_BODY_TRACKING)
     k4abt_tracker_(nullptr),
@@ -44,6 +104,7 @@ K4AROSDevice::K4AROSDevice(const NodeHandle& n, const NodeHandle& p)
     private_node_(p),
     image_transport_(n),
     last_capture_time_usec_(0),
+    save_capture_time(0),
     last_imu_time_usec_(0),
     imu_stream_end_of_file_(false)
 {
@@ -61,10 +122,11 @@ K4AROSDevice::K4AROSDevice(const NodeHandle& n, const NodeHandle& p)
     // Open recording file and print its length
     k4a_playback_handle_ = k4a::playback::open(params_.recording_file.c_str());
     auto recording_length = k4a_playback_handle_.get_recording_length();
-    ROS_INFO_STREAM("Successfully openend recording file. Recording is " << recording_length.count() / 1000000
+    ROS_INFO_STREAM("Successfully openend recording file. Recording is " << recording_length.count() / (double)1000000
                                                                          << " seconds long");
 
     // Get the recordings configuration to overwrite node parameters
+
     k4a_record_configuration_t record_config = k4a_playback_handle_.get_record_configuration();
 
     // Overwrite fps param with recording configuration for a correct loop rate in the frame publisher thread
@@ -81,6 +143,7 @@ K4AROSDevice::K4AROSDevice(const NodeHandle& n, const NodeHandle& p)
         break;
       default:
         break;
+        
     };
 
     // Disable color if the recording has no color track
@@ -189,23 +252,61 @@ K4AROSDevice::K4AROSDevice(const NodeHandle& n, const NodeHandle& p)
       return;
     }
 
+    k4a_device_configuration_t device_config = K4A_DEVICE_CONFIG_INIT_DISABLE_ALL;
+    k4a_result_t result = params_.GetDeviceConfig(&device_config);   
+
+    if (params_.recording_folder !="")
+    {
+      ROS_INFO_STREAM("Recording will be saved in  : " << params_.recording_folder);
+      k4a_recording_handle_ = k4a::record::create(params_.recording_folder.c_str(), k4a_device_, device_config);
+      
+      // Add a custom recording tag labeling the camera streaming 
+      k4a_recording_handle_.add_tag(  "CUSTOM_TAG", params_.file_name.c_str() );
+
+      //if custom capturing is needed in the future follow the following depth template from MS 
+      // examples SDK  
+      /*
+      k4a_calibration_t sensor_calibration;
+      sensor_calibration = k4a_device_.get_calibration( device_config.depth_mode, 
+                                                      K4A_COLOR_RESOLUTION_OFF );
+
+      uint32_t depth_width  = (uint32_t)sensor_calibration.depth_camera_calibration.resolution_width;
+      uint32_t depth_height = (uint32_t)sensor_calibration.depth_camera_calibration.resolution_height;
+    
+      k4a_record_video_settings_t video_settings;
+      video_settings.width      = depth_width ;
+      video_settings.height     = depth_height;
+      video_settings.frame_rate = params_.fps; // Should be the same rate as params_.camera_fps
+  
+      BITMAPINFOHEADER codec_header;
+      fill_bitmap_header( video_settings.width, 
+                        video_settings.height, 
+                        &codec_header
+                        );
+
+      k4a_recording_handle_.add_custom_video_track( "PROCESSED_DEPTH",
+                                                  "V_MS/VFW/FOURCC",
+                                                 (uint8_t *)(&codec_header),
+                                                  sizeof(codec_header),
+                                                  &video_settings);
+
+      */
+      k4a_recording_handle_.write_header();
+
+    }  
+ 
     ROS_INFO_STREAM("K4A Serial Number: " << k4a_device_.get_serialnum());
 
     k4a_hardware_version_t version_info = k4a_device_.get_version();
 
-    ROS_INFO("RGB Version: %d.%d.%d", version_info.rgb.major, version_info.rgb.minor, version_info.rgb.iteration);
-
-    ROS_INFO("Depth Version: %d.%d.%d", version_info.depth.major, version_info.depth.minor,
-             version_info.depth.iteration);
-
-    ROS_INFO("Audio Version: %d.%d.%d", version_info.audio.major, version_info.audio.minor,
-             version_info.audio.iteration);
-
-    ROS_INFO("Depth Sensor Version: %d.%d.%d", version_info.depth_sensor.major, version_info.depth_sensor.minor,
-             version_info.depth_sensor.iteration);
+    ROS_INFO("RGB Version: %d.%d.%d",           version_info.rgb.major  ,         version_info.rgb.minor  ,         version_info.rgb.iteration);
+    ROS_INFO("Depth Version: %d.%d.%d",         version_info.depth.major,         version_info.depth.minor,         version_info.depth.iteration);
+    ROS_INFO("Audio Version: %d.%d.%d",         version_info.audio.major,         version_info.audio.minor,         version_info.audio.iteration);
+    ROS_INFO("Depth Sensor Version: %d.%d.%d",  version_info.depth_sensor.major,  version_info.depth_sensor.minor,  version_info.depth_sensor.iteration);
   }
 
-  // Register our topics
+  //>> TO DO : Extend it to other video formats if possible with ROS.
+
   if (params_.color_format == "jpeg")
   {
     // JPEG images are directly published on 'rgb/image_raw/compressed' so that
@@ -218,23 +319,23 @@ K4AROSDevice::K4AROSDevice(const NodeHandle& n, const NodeHandle& p)
   {
     rgb_raw_publisher_ = image_transport_.advertise("rgb/image_raw", 1);
   }
-  rgb_raw_camerainfo_publisher_ = node_.advertise<CameraInfo>("rgb/camera_info", 1);
 
-  depth_raw_publisher_ = image_transport_.advertise("depth/image_raw", 1);
-  depth_raw_camerainfo_publisher_ = node_.advertise<CameraInfo>("depth/camera_info", 1);
-
-  depth_rect_publisher_ = image_transport_.advertise("depth_to_rgb/image_raw", 1);
-  depth_rect_camerainfo_publisher_ = node_.advertise<CameraInfo>("depth_to_rgb/camera_info", 1);
-
-  rgb_rect_publisher_ = image_transport_.advertise("rgb_to_depth/image_raw", 1);
-  rgb_rect_camerainfo_publisher_ = node_.advertise<CameraInfo>("rgb_to_depth/camera_info", 1);
-
-  ir_raw_publisher_ = image_transport_.advertise("ir/image_raw", 1);
-  ir_raw_camerainfo_publisher_ = node_.advertise<CameraInfo>("ir/camera_info", 1);
-
-  imu_orientation_publisher_ = node_.advertise<Imu>("imu", 200);
-
-  pointcloud_publisher_ = node_.advertise<PointCloud2>("points2", 1);
+  rgb_raw_camerainfo_publisher_     = node_.advertise<CameraInfo>("rgb/camera_info", 1);
+  
+  depth_raw_publisher_              = image_transport_.advertise("depth/image_raw", 1);
+  depth_raw_camerainfo_publisher_   = node_.advertise<CameraInfo>("depth/camera_info", 1);
+  
+  depth_rect_publisher_             = image_transport_.advertise("depth_to_rgb/image_raw", 1);
+  depth_rect_camerainfo_publisher_  = node_.advertise<CameraInfo>("depth_to_rgb/camera_info", 1);
+  
+  rgb_rect_publisher_               = image_transport_.advertise("rgb_to_depth/image_raw", 1);
+  rgb_rect_camerainfo_publisher_    = node_.advertise<CameraInfo>("rgb_to_depth/camera_info", 1);
+  
+  ir_raw_publisher_                 = image_transport_.advertise("ir/image_raw", 1);
+  ir_raw_camerainfo_publisher_      = node_.advertise<CameraInfo>("ir/camera_info", 1);
+  
+  imu_orientation_publisher_        = node_.advertise<Imu>("imu", 200);
+  pointcloud_publisher_             = node_.advertise<PointCloud2>("points2", 1);
 
 #if defined(K4A_BODY_TRACKING)
   body_marker_publisher_ = node_.advertise<MarkerArray>("body_tracking_data", 1);
@@ -257,14 +358,26 @@ K4AROSDevice::~K4AROSDevice()
   ROS_INFO("Joining IMU publisher thread");
   imu_publisher_thread_.join();
   ROS_INFO("IMU publisher thread joined");
+  
+  //stop recording  
+  if(k4a_recording_handle_)
+  {
+    k4a_recording_handle_.flush();
+    ROS_INFO("PAUSE RECODING ON DISK DRIVE ");
+    k4a_recording_handle_.close();
+    ROS_INFO("STOP RECODING ........");
 
-  stopCameras();
-  stopImu();
+  }
+  //stop playingback  
 
   if (k4a_playback_handle_)
   {
+    ROS_INFO("STOP PLAYINGBACK ........ " );
     k4a_playback_handle_.close();
   }
+  //stop device Camera && IMU
+  stopCameras();
+  stopImu();
 
 #if defined(K4A_BODY_TRACKING)
   if (k4abt_tracker_)
@@ -286,6 +399,7 @@ k4a_result_t K4AROSDevice::startCameras()
       ROS_ERROR("Failed to generate a device configuration. Not starting camera!");
       return result;
     }
+  
 
     // Now that we have a proposed camera configuration, we can
     // initialize the class which will take care of device calibration information
@@ -361,8 +475,48 @@ void K4AROSDevice::stopImu()
   }
 }
 
+bool saveDepthFrame(k4a::image& k4a_frame, const std::string path)
+{
+  std::string visPath = path;     visPath.append("_Depth_Vis.png");
+  std::string rawPath = path;     rawPath.append("_Depth.png");
+  std::string pfmPath = path;     pfmPath.append("_Depth.pfm");
+
+  cv::Mat depth_frame_buffer_mat(k4a_frame.get_height_pixels(), k4a_frame.get_width_pixels(), CV_16UC1,
+                                 k4a_frame.get_buffer());
+
+  cv::Mat vis_depth(k4a_frame.get_height_pixels(), k4a_frame.get_width_pixels(), CV_32FC1);        // visualization
+  cv::Mat raw_depth(k4a_frame.get_height_pixels(), k4a_frame.get_width_pixels(), CV_32FC1);       // Raw
+
+  // Fill in the depth image data, converting mm to m
+  float bad_point = std::numeric_limits<float>::quiet_NaN ();
+
+  for(size_t i = 0; i < depth_frame_buffer_mat.rows; i++)
+  {
+    for(size_t j = 0; j < depth_frame_buffer_mat.cols; j++)
+    {
+      uint16_t pDepth = depth_frame_buffer_mat.at<uint16_t>(i,j);
+      raw_depth.at<float>(i,j) = (pDepth == 0) ? bad_point : (float) pDepth * 0.001f;
+    }
+  }
+
+  writeFilePFM(pfmPath, raw_depth, 1/255);       // pfm format === mm  ?? is this right
+  
+  for(size_t i = 0; i < depth_frame_buffer_mat.rows; i++)
+  {
+    for(size_t j = 0; j < depth_frame_buffer_mat.cols; j++)
+    {
+      uint16_t pDepth = depth_frame_buffer_mat.at<uint16_t>(i,j);
+      vis_depth.at<float>(i,j) = (pDepth == 0) ? bad_point : (float) pDepth * 0.1f;  // ;) just Gray Scale Visulaization   
+    }
+  }
+  
+  cv::imwrite( visPath, vis_depth );  
+  return cv::imwrite( rawPath, raw_depth );
+};
+
 k4a_result_t K4AROSDevice::getDepthFrame(const k4a::capture& capture, sensor_msgs::ImagePtr& depth_image,
-                                         bool rectified = false)
+                                        std::string path,
+                                        bool rectified = false)
 {
   k4a::image k4a_depth_frame = capture.get_depth_image();
 
@@ -372,11 +526,20 @@ k4a_result_t K4AROSDevice::getDepthFrame(const k4a::capture& capture, sensor_msg
     return K4A_RESULT_FAILED;
   }
 
+  if(!rectified && k4a_playback_handle_)
+  {
+    // save Depth frame *.jpg
+    if (!saveDepthFrame(k4a_depth_frame,path))
+    {
+      ROS_ERROR("Cannot save Depth frame to folder");
+      return K4A_RESULT_FAILED;
+    }
+  }
+  
   if (rectified)
   {
     calibration_data_.k4a_transformation_.depth_image_to_color_camera(k4a_depth_frame,
                                                                       &calibration_data_.transformed_depth_image_);
-
     return renderDepthToROS(depth_image, calibration_data_.transformed_depth_image_);
   }
 
@@ -391,13 +554,22 @@ k4a_result_t K4AROSDevice::renderDepthToROS(sensor_msgs::ImagePtr& depth_image, 
 
   depth_frame_buffer_mat.convertTo(new_image, CV_32FC1, 1.0 / 1000.0f);
 
-  depth_image =
-      cv_bridge::CvImage(std_msgs::Header(), sensor_msgs::image_encodings::TYPE_32FC1, new_image).toImageMsg();
+  depth_image =cv_bridge::CvImage(std_msgs::Header(), sensor_msgs::image_encodings::TYPE_32FC1, new_image).toImageMsg();
 
   return K4A_RESULT_SUCCEEDED;
 }
 
-k4a_result_t K4AROSDevice::getIrFrame(const k4a::capture& capture, sensor_msgs::ImagePtr& ir_image)
+
+bool saveIrFrame(k4a::image& k4a_frame, const std::string path)
+{
+  cv::Mat Ir_buffer_mat(k4a_frame.get_height_pixels(), k4a_frame.get_width_pixels(), CV_16UC1,
+                                 k4a_frame.get_buffer());
+
+  return cv::imwrite( path, Ir_buffer_mat );
+};
+
+k4a_result_t K4AROSDevice::getIrFrame(const k4a::capture& capture, sensor_msgs::ImagePtr& ir_image,
+                                      std::string path)
 {
   k4a::image k4a_ir_frame = capture.get_ir_image();
 
@@ -407,13 +579,25 @@ k4a_result_t K4AROSDevice::getIrFrame(const k4a::capture& capture, sensor_msgs::
     return K4A_RESULT_FAILED;
   }
 
+  if(k4a_playback_handle_)
+  {
+    path.append("_Ir.png");
+    if (!saveIrFrame(k4a_ir_frame, path))
+    {
+      ROS_ERROR("Cannot save IR frame to folder");
+      return K4A_RESULT_FAILED;
+   }
+  } 
   return renderIrToROS(ir_image, k4a_ir_frame);
 }
+
 
 k4a_result_t K4AROSDevice::renderIrToROS(sensor_msgs::ImagePtr& ir_image, k4a::image& k4a_ir_frame)
 {
   cv::Mat ir_buffer_mat(k4a_ir_frame.get_height_pixels(), k4a_ir_frame.get_width_pixels(), CV_16UC1,
                         k4a_ir_frame.get_buffer());
+
+  
 
   // Rescale the image to mono8 for visualization and usage for visual(-inertial) odometry.
   if (params_.rescale_ir_to_mono8)
@@ -432,7 +616,16 @@ k4a_result_t K4AROSDevice::renderIrToROS(sensor_msgs::ImagePtr& ir_image, k4a::i
   return K4A_RESULT_SUCCEEDED;
 }
 
-k4a_result_t K4AROSDevice::getJpegRgbFrame(const k4a::capture& capture, sensor_msgs::CompressedImagePtr& jpeg_image)
+bool saveJpegRgbFrame(k4a::image& k4a_frame, const std::string path)
+{
+  cv::Mat rgb_buffer_mat(k4a_frame.get_height_pixels(), k4a_frame.get_width_pixels(), CV_8UC4,
+                         k4a_frame.get_buffer());                             
+
+  return cv::imwrite( path, rgb_buffer_mat );
+};
+
+k4a_result_t K4AROSDevice::getJpegRgbFrame(const k4a::capture& capture, sensor_msgs::CompressedImagePtr& jpeg_image,
+                                          std::string path)
 {
   k4a::image k4a_jpeg_frame = capture.get_color_image();
 
@@ -442,13 +635,32 @@ k4a_result_t K4AROSDevice::getJpegRgbFrame(const k4a::capture& capture, sensor_m
     return K4A_RESULT_FAILED;
   }
 
+  if (k4a_playback_handle_)
+  {
+    // save image frame *.jpg
+    path.append("_JPEG.png");
+    if(!saveJpegRgbFrame(k4a_jpeg_frame, path))
+    {
+      ROS_ERROR("Cannot save BGRA frame to folder");
+      return K4A_RESULT_FAILED;
+    }
+  }
   const uint8_t* jpeg_frame_buffer = k4a_jpeg_frame.get_buffer();
   jpeg_image->format = "jpeg";
   jpeg_image->data.assign(jpeg_frame_buffer, jpeg_frame_buffer + k4a_jpeg_frame.get_size());
   return K4A_RESULT_SUCCEEDED;
 }
 
+bool saveRbgFrame(k4a::image& k4a_frame, const std::string path)
+{
+  cv::Mat rgb_buffer_mat(k4a_frame.get_height_pixels(), k4a_frame.get_width_pixels(), CV_8UC4,
+                         k4a_frame.get_buffer());                             
+
+  return cv::imwrite( path, rgb_buffer_mat );
+};
+
 k4a_result_t K4AROSDevice::getRbgFrame(const k4a::capture& capture, sensor_msgs::ImagePtr& rgb_image,
+                                      std::string path,
                                        bool rectified = false)
 {
   k4a::image k4a_bgra_frame = capture.get_color_image();
@@ -457,6 +669,18 @@ k4a_result_t K4AROSDevice::getRbgFrame(const k4a::capture& capture, sensor_msgs:
   {
     ROS_ERROR("Cannot render BGRA frame: no frame");
     return K4A_RESULT_FAILED;
+  }
+  
+  if (!rectified && k4a_playback_handle_)
+  {
+    // save image frame *.jpg
+    path.append("_RGB.png");
+    
+    if (!saveRbgFrame(k4a_bgra_frame,path))
+    {
+      ROS_ERROR("Cannot save BGRA frame to folder");
+      return K4A_RESULT_FAILED;
+    }
   }
 
   size_t color_image_size =
@@ -493,8 +717,58 @@ k4a_result_t K4AROSDevice::renderBGRA32ToROS(sensor_msgs::ImagePtr& rgb_image, k
   return K4A_RESULT_SUCCEEDED;
 }
 
+bool saveImageToDepth(k4a::image* k4a_frame, std::string path)
+{
+  cv::Mat rgb_buffer_mat(k4a_frame->get_height_pixels(), k4a_frame->get_width_pixels(), CV_8UC4,
+                         k4a_frame->get_buffer());                             
+
+  return cv::imwrite( path, rgb_buffer_mat );
+
+}
+
+bool saveDepthToImage(k4a::image* k4a_frame, std::string path)
+{
+  std::string visPath = path;     visPath.append("_Depth_Registed_Vis.png");
+  std::string rawPath = path;     rawPath.append("_Depth_Registed.png");
+  std::string pfmPath = path;     pfmPath.append("_Depth_Registed.pfm");
+
+  cv::Mat depth_frame_buffer_mat(k4a_frame->get_height_pixels(), k4a_frame->get_width_pixels(), CV_16UC1,
+                                 k4a_frame->get_buffer());
+
+  cv::Mat vis_depth(k4a_frame->get_height_pixels(), k4a_frame->get_width_pixels(), CV_32FC1);        // visualization
+  cv::Mat raw_depth(k4a_frame->get_height_pixels(), k4a_frame->get_width_pixels(), CV_32FC1);       // Raw
+
+  // Fill in the depth image data, converting mm to m
+  float bad_point = std::numeric_limits<float>::quiet_NaN ();
+
+  for(size_t i = 0; i < depth_frame_buffer_mat.rows; i++)
+  {
+    for(size_t j = 0; j < depth_frame_buffer_mat.cols; j++)
+    {
+      uint16_t pDepth = depth_frame_buffer_mat.at<uint16_t>(i,j);
+      raw_depth.at<float>(i,j) = (pDepth == 0) ? bad_point : (float) pDepth * 0.001f;
+    }
+  }
+
+  writeFilePFM(pfmPath, raw_depth, 1/255.0);       // pfm format === mm  ?? is this right
+
+  
+  for(size_t i = 0; i < depth_frame_buffer_mat.rows; i++)
+  {
+    for(size_t j = 0; j < depth_frame_buffer_mat.cols; j++)
+    {
+      uint16_t pDepth = depth_frame_buffer_mat.at<uint16_t>(i,j);
+      vis_depth.at<float>(i,j) = (pDepth == 0) ? bad_point : (float) pDepth * 0.1f;  // ;) just Gray Scale Visulaization   
+    }
+  }
+  
+  cv::imwrite( visPath, vis_depth );  
+  return cv::imwrite( rawPath, raw_depth );
+}
+
 k4a_result_t K4AROSDevice::getRgbPointCloudInDepthFrame(const k4a::capture& capture,
-                                                        sensor_msgs::PointCloud2Ptr& point_cloud)
+                                                        sensor_msgs::PointCloud2Ptr& point_cloud,
+                                                        std::string path)
 {
   const k4a::image k4a_depth_frame = capture.get_depth_image();
   if (!k4a_depth_frame)
@@ -513,6 +787,33 @@ k4a_result_t K4AROSDevice::getRgbPointCloudInDepthFrame(const k4a::capture& capt
   // Transform color image into the depth camera frame:
   calibration_data_.k4a_transformation_.color_image_to_depth_camera(k4a_depth_frame, k4a_bgra_frame,
                                                                     &calibration_data_.transformed_rgb_image_);
+  
+
+
+  //calibration_data_.k4a_transformation_.depth_image_to_color_camera(k4a_depth_frame,
+   //                                                                   &calibration_data_.transformed_depth_image_);
+
+  std::string pathD = path;
+  //std::string pathI = path;
+
+  if (k4a_playback_handle_)
+  {
+    //save Image to Depth Frame
+    pathD.append("_Image_Registed.png");
+
+    if (!saveImageToDepth(&calibration_data_.transformed_rgb_image_, pathD))
+    {
+      ROS_ERROR("Cannot save Image to Depth Frame to folder");
+      return K4A_RESULT_FAILED;
+    }
+
+   // save Depth to Image Frame
+   // if (!saveDepthToImage(&calibration_data_.transformed_depth_image_, pathI))
+   // {
+   //   ROS_ERROR("Cannot save Depth to Image Frame to folder");
+   //   return K4A_RESULT_FAILED;
+   // }
+  }
 
   // Tranform depth image to point cloud
   calibration_data_.k4a_transformation_.depth_image_to_point_cloud(k4a_depth_frame, K4A_CALIBRATION_TYPE_DEPTH,
@@ -526,8 +827,10 @@ k4a_result_t K4AROSDevice::getRgbPointCloudInDepthFrame(const k4a::capture& capt
                              point_cloud);
 }
 
+
 k4a_result_t K4AROSDevice::getRgbPointCloudInRgbFrame(const k4a::capture& capture,
-                                                      sensor_msgs::PointCloud2Ptr& point_cloud)
+                                                      sensor_msgs::PointCloud2Ptr& point_cloud,
+                                                      std::string path)
 {
   k4a::image k4a_depth_frame = capture.get_depth_image();
   if (!k4a_depth_frame)
@@ -547,6 +850,16 @@ k4a_result_t K4AROSDevice::getRgbPointCloudInRgbFrame(const k4a::capture& captur
   calibration_data_.k4a_transformation_.depth_image_to_color_camera(k4a_depth_frame,
                                                                     &calibration_data_.transformed_depth_image_);
 
+  if (k4a_playback_handle_)
+  {
+    // save Depth to Image Frame
+
+    if (!saveDepthToImage(&calibration_data_.transformed_depth_image_, path))
+    {
+      ROS_ERROR("Cannot save Depth to Image Frame to folder");
+      return K4A_RESULT_FAILED;
+    }
+  }
   // Tranform depth image to point cloud (note that this is now from the perspective of the color camera)
   calibration_data_.k4a_transformation_.depth_image_to_point_cloud(
       calibration_data_.transformed_depth_image_, K4A_CALIBRATION_TYPE_COLOR, &calibration_data_.point_cloud_image_);
@@ -813,355 +1126,406 @@ void K4AROSDevice::framePublisherThread()
   calibration_data_.getRgbCameraInfo(depth_rect_camera_info);
   calibration_data_.getDepthCameraInfo(ir_raw_camera_info);
 
+  
+
+  std::string swap = syncStatus;
+
   while (running_ && ros::ok() && !ros::isShuttingDown())
   {
-    if (k4a_device_)
-    {
-      // TODO: consider appropriate capture timeout based on camera framerate
-      if (!k4a_device_.get_capture(&capture, std::chrono::milliseconds(K4A_WAIT_INFINITE)))
+      sub = node_.subscribe("/chatter", 100, callback);
+
+      if (syncStatus =="record" )
       {
-        ROS_FATAL("Failed to poll cameras: node cannot continue.");
-        ros::requestShutdown();
-        return;
+        params_.recording_enabled = true;
+      
       }
-    }
-    else if (k4a_playback_handle_)
-    {
-      std::lock_guard<std::mutex> guard(k4a_playback_handle_mutex_);
-      if (!k4a_playback_handle_.get_next_capture(&capture))
+      else
       {
-        // rewind recording if looping is enabled
-        if (params_.recording_loop_enabled)
+        params_.recording_enabled = false;
+      }
+
+      if (syncStatus != swap)
+      {
+        std::cout << params_.sensor_sn<< " >>>> " << syncStatus << std::endl;
+        std::cout << "                      " << std::endl;
+        swap = syncStatus;
+      }
+
+      if (k4a_device_)
+      {
+        // TODO: consider appropriate capture timeout based on camera framerate
+        if (!k4a_device_.get_capture(&capture, std::chrono::milliseconds(K4A_WAIT_INFINITE)))
         {
-          k4a_playback_handle_.seek_timestamp(std::chrono::microseconds(0), K4A_PLAYBACK_SEEK_BEGIN);
-          k4a_playback_handle_.get_next_capture(&capture);
-          imu_stream_end_of_file_ = false;
-          last_imu_time_usec_ = 0;
-        }
-        else
-        {
-          ROS_INFO("Recording reached end of file. node cannot continue.");
+          ROS_FATAL("Failed to poll cameras: node cannot continue.");
           ros::requestShutdown();
           return;
         }
       }
-
-      last_capture_time_usec_ = getCaptureTimestamp(capture).count();
-    }
-
-    CompressedImagePtr rgb_jpeg_frame(new CompressedImage);
-    ImagePtr rgb_raw_frame(new Image);
-    ImagePtr rgb_rect_frame(new Image);
-    ImagePtr depth_raw_frame(new Image);
-    ImagePtr depth_rect_frame(new Image);
-    ImagePtr ir_raw_frame(new Image);
-    PointCloud2Ptr point_cloud(new PointCloud2);
-
-    if (params_.depth_enabled)
-    {
-      // Only do compute if we have subscribers
-      // Only create ir frame when we are using a device or we have an ir image.
-      // Recordings may not have synchronized captures. For unsynchronized captures without ir image skip ir frame.
-      if ((ir_raw_publisher_.getNumSubscribers() > 0 || ir_raw_camerainfo_publisher_.getNumSubscribers() > 0) &&
-          (k4a_device_ || capture.get_ir_image() != nullptr))
+      else if (k4a_playback_handle_)
       {
-        // IR images are available in all depth modes
-        result = getIrFrame(capture, ir_raw_frame);
-
-        if (result != K4A_RESULT_SUCCEEDED)
+        std::lock_guard<std::mutex> guard(k4a_playback_handle_mutex_);
+        if (!k4a_playback_handle_.get_next_capture(&capture))   
         {
-          ROS_ERROR_STREAM("Failed to get raw IR frame");
-          ros::shutdown();
-          return;
-        }
-        else if (result == K4A_RESULT_SUCCEEDED)
-        {
-          capture_time = timestampToROS(capture.get_ir_image().get_device_timestamp());
-          printTimestampDebugMessage("IR image", capture_time);
-
-          // Re-sychronize the timestamps with the capture timestamp
-          ir_raw_camera_info.header.stamp = capture_time;
-          ir_raw_frame->header.stamp = capture_time;
-          ir_raw_frame->header.frame_id = calibration_data_.tf_prefix_ + calibration_data_.depth_camera_frame_;
-
-          ir_raw_publisher_.publish(ir_raw_frame);
-          ir_raw_camerainfo_publisher_.publish(ir_raw_camera_info);
-        }
-      }
-
-      // Depth images are not available in PASSIVE_IR mode
-      if (calibration_data_.k4a_calibration_.depth_mode != K4A_DEPTH_MODE_PASSIVE_IR)
-      {
-        // Only create depth frame when we are using a device or we have an depth image.
-        // Recordings may not have synchronized captures. For unsynchronized captures without depth image skip depth
-        // frame.
-        if ((depth_raw_publisher_.getNumSubscribers() > 0 || depth_raw_camerainfo_publisher_.getNumSubscribers() > 0) &&
-            (k4a_device_ || capture.get_depth_image() != nullptr))
-        {
-          result = getDepthFrame(capture, depth_raw_frame);
-
-          if (result != K4A_RESULT_SUCCEEDED)
+          // rewind recording if looping is enabled
+          if (params_.recording_loop_enabled)
           {
-            ROS_ERROR_STREAM("Failed to get raw depth frame");
-            ros::shutdown();
-            return;
-          }
-          else if (result == K4A_RESULT_SUCCEEDED)
-          {
-            capture_time = timestampToROS(capture.get_depth_image().get_device_timestamp());
-            printTimestampDebugMessage("Depth image", capture_time);
-
-            // Re-sychronize the timestamps with the capture timestamp
-            depth_raw_camera_info.header.stamp = capture_time;
-            depth_raw_frame->header.stamp = capture_time;
-            depth_raw_frame->header.frame_id = calibration_data_.tf_prefix_ + calibration_data_.depth_camera_frame_;
-
-            depth_raw_publisher_.publish(depth_raw_frame);
-            depth_raw_camerainfo_publisher_.publish(depth_raw_camera_info);
-          }
-        }
-
-        // We can only rectify the depth into the color co-ordinates if the color camera is enabled!
-        // Only create rect depth frame when we are using a device or we have an depth image.
-        // Recordings may not have synchronized captures. For unsynchronized captures without depth image skip rect
-        // depth frame.
-        if (params_.color_enabled &&
-            (depth_rect_publisher_.getNumSubscribers() > 0 ||
-             depth_rect_camerainfo_publisher_.getNumSubscribers() > 0) &&
-            (k4a_device_ || capture.get_depth_image() != nullptr))
-        {
-          result = getDepthFrame(capture, depth_rect_frame, true /* rectified */);
-
-          if (result != K4A_RESULT_SUCCEEDED)
-          {
-            ROS_ERROR_STREAM("Failed to get rectifed depth frame");
-            ros::shutdown();
-            return;
-          }
-          else if (result == K4A_RESULT_SUCCEEDED)
-          {
-            capture_time = timestampToROS(capture.get_depth_image().get_device_timestamp());
-            printTimestampDebugMessage("Depth image", capture_time);
-
-            depth_rect_frame->header.stamp = capture_time;
-            depth_rect_frame->header.frame_id = calibration_data_.tf_prefix_ + calibration_data_.rgb_camera_frame_;
-            depth_rect_publisher_.publish(depth_rect_frame);
-
-            // Re-synchronize the header timestamps since we cache the camera calibration message
-            depth_rect_camera_info.header.stamp = capture_time;
-            depth_rect_camerainfo_publisher_.publish(depth_rect_camera_info);
-          }
-        }
-
-#if defined(K4A_BODY_TRACKING)
-        // Publish body markers when body tracking is enabled and a depth image is available
-        if (params_.body_tracking_enabled &&
-            (body_marker_publisher_.getNumSubscribers() > 0 || body_index_map_publisher_.getNumSubscribers() > 0))
-        {
-          capture_time = timestampToROS(capture.get_depth_image().get_device_timestamp());
-
-          if (!k4abt_tracker_.enqueue_capture(capture))
-          {
-            ROS_ERROR("Error! Add capture to tracker process queue failed!");
-            ros::shutdown();
-            return;
+            k4a_playback_handle_.seek_timestamp(std::chrono::microseconds(0), K4A_PLAYBACK_SEEK_BEGIN);
+            k4a_playback_handle_.get_next_capture(&capture);
+            imu_stream_end_of_file_ = false;
+            last_imu_time_usec_ = 0;
           }
           else
           {
-            k4abt::frame body_frame = k4abt_tracker_.pop_result();
-            if (body_frame == nullptr)
+            ROS_INFO("Recording reached end of file. node cannot continue.");
+            ros::requestShutdown();
+            return;
+          }
+        }
+
+
+        save_capture_time = getCaptureTimestamp(capture);
+        last_capture_time_usec_ = save_capture_time.count();
+      }
+
+      CompressedImagePtr rgb_jpeg_frame(new CompressedImage);
+      ImagePtr rgb_raw_frame(new Image);
+      ImagePtr rgb_rect_frame(new Image);
+      ImagePtr depth_raw_frame(new Image);
+      ImagePtr depth_rect_frame(new Image);
+      ImagePtr ir_raw_frame(new Image);
+      PointCloud2Ptr point_cloud(new PointCloud2);
+
+      
+      if (params_.recording_enabled)
+      {
+        // TODO: consider appropriate capture function calling;  best time to capture
+        k4a_recording_handle_.write_capture(capture);
+      }
+
+      // Create frame files names using iso time  name_*.*
+
+      std::string path = params_.recording_folder.c_str();
+
+      boost::posix_time::ptime isoTime = boost::posix_time::ptime(capture_time.toBoost());
+      std::string isoTimeString = boost::posix_time::to_iso_extended_string(isoTime); 
+
+      path.append("_"); path.append(isoTimeString);
+      
+      if (params_.depth_enabled)
+      {
+        // Only do compute if we have subscribers
+        // Only create ir frame when we are using a device or we have an ir image.
+        // Recordings may not have synchronized captures. For unsynchronized captures without ir image skip ir frame.
+        if (
+          //(ir_raw_publisher_.getNumSubscribers() > 0 || ir_raw_camerainfo_publisher_.getNumSubscribers() > 0) &&
+            (k4a_device_ || capture.get_ir_image() != nullptr))
+        {
+          // IR images are available in all depth modes
+          result = getIrFrame(capture, ir_raw_frame , path);
+
+          if (result != K4A_RESULT_SUCCEEDED)
+          {
+            ROS_ERROR_STREAM("Failed to get raw IR frame");
+            ros::shutdown();
+            return;
+          }
+          else if (result == K4A_RESULT_SUCCEEDED)
+          {
+            capture_time = timestampToROS(capture.get_ir_image().get_device_timestamp());
+            printTimestampDebugMessage("IR image", capture_time);
+
+            // Re-sychronize the timestamps with the capture timestamp
+            ir_raw_camera_info.header.stamp = capture_time;
+            ir_raw_frame->header.stamp = capture_time;
+            ir_raw_frame->header.frame_id = calibration_data_.tf_prefix_ + calibration_data_.depth_camera_frame_;
+
+            ir_raw_publisher_.publish(ir_raw_frame);
+            ir_raw_camerainfo_publisher_.publish(ir_raw_camera_info);
+          }
+        }
+
+        // Depth images are not available in PASSIVE_IR mode
+        if (calibration_data_.k4a_calibration_.depth_mode != K4A_DEPTH_MODE_PASSIVE_IR)
+        {
+          // Only create depth frame when we are using a device or we have an depth image.
+          // Recordings may not have synchronized captures. For unsynchronized captures without depth image skip depth
+          // frame.
+          if (
+            //(depth_raw_publisher_.getNumSubscribers() > 0 || depth_raw_camerainfo_publisher_.getNumSubscribers() > 0) &&
+              (k4a_device_ || capture.get_depth_image() != nullptr))
+          {
+            result = getDepthFrame(capture, depth_raw_frame, path);
+
+            if (result != K4A_RESULT_SUCCEEDED)
             {
-              ROS_ERROR_STREAM("Pop body frame result failed!");
+              ROS_ERROR_STREAM("Failed to get raw depth frame");
+              ros::shutdown();
+              return;
+            }
+            else if (result == K4A_RESULT_SUCCEEDED)
+            {
+              capture_time = timestampToROS(capture.get_depth_image().get_device_timestamp());
+              printTimestampDebugMessage("Depth image", capture_time);
+
+              // Re-sychronize the timestamps with the capture timestamp
+              depth_raw_camera_info.header.stamp = capture_time;
+              depth_raw_frame->header.stamp = capture_time;
+              depth_raw_frame->header.frame_id = calibration_data_.tf_prefix_ + calibration_data_.depth_camera_frame_;
+
+              depth_raw_publisher_.publish(depth_raw_frame);
+              depth_raw_camerainfo_publisher_.publish(depth_raw_camera_info);
+            }
+          }
+
+          // We can only rectify the depth into the color co-ordinates if the color camera is enabled!
+          // Only create rect depth frame when we are using a device or we have an depth image.
+          // Recordings may not have synchronized captures. For unsynchronized captures without depth image skip rect
+          // depth frame.
+          if (params_.color_enabled &&
+              //(depth_rect_publisher_.getNumSubscribers() > 0 ||
+              // depth_rect_camerainfo_publisher_.getNumSubscribers() > 0) &&
+              (k4a_device_ || capture.get_depth_image() != nullptr))
+          {
+            result = getDepthFrame(capture, depth_rect_frame, path,  true/* rectified */);
+
+            if (result != K4A_RESULT_SUCCEEDED)
+            {
+              ROS_ERROR_STREAM("Failed to get rectifed depth frame");
+              ros::shutdown();
+              return;
+            }
+            else if (result == K4A_RESULT_SUCCEEDED)
+            {
+              capture_time = timestampToROS(capture.get_depth_image().get_device_timestamp());
+              printTimestampDebugMessage("Depth image", capture_time);
+
+              depth_rect_frame->header.stamp = capture_time;
+              depth_rect_frame->header.frame_id = calibration_data_.tf_prefix_ + calibration_data_.rgb_camera_frame_;
+              depth_rect_publisher_.publish(depth_rect_frame);
+
+              // Re-synchronize the header timestamps since we cache the camera calibration message
+              depth_rect_camera_info.header.stamp = capture_time;
+              depth_rect_camerainfo_publisher_.publish(depth_rect_camera_info);
+
+
+            }
+          }
+
+  #if defined(K4A_BODY_TRACKING)
+          // Publish body markers when body tracking is enabled and a depth image is available
+          if (params_.body_tracking_enabled &&
+              (body_marker_publisher_.getNumSubscribers() > 0 || body_index_map_publisher_.getNumSubscribers() > 0))
+          {
+            capture_time = timestampToROS(capture.get_depth_image().get_device_timestamp());
+
+            if (!k4abt_tracker_.enqueue_capture(capture))
+            {
+              ROS_ERROR("Error! Add capture to tracker process queue failed!");
               ros::shutdown();
               return;
             }
             else
             {
-              if (body_marker_publisher_.getNumSubscribers() > 0)
+              k4abt::frame body_frame = k4abt_tracker_.pop_result();
+              if (body_frame == nullptr)
               {
-                // Joint marker array
-                MarkerArrayPtr markerArrayPtr(new MarkerArray);
-                auto num_bodies = body_frame.get_num_bodies();
-                for (size_t i = 0; i < num_bodies; ++i)
-                {
-                  k4abt_body_t body = body_frame.get_body(i);
-                  for (int j = 0; j < (int) K4ABT_JOINT_COUNT; ++j)
-                  {
-                    MarkerPtr markerPtr(new Marker);
-                    getBodyMarker(body, markerPtr, j, capture_time);
-                    markerArrayPtr->markers.push_back(*markerPtr);
-                  }
-                }
-                body_marker_publisher_.publish(markerArrayPtr);
+                ROS_ERROR_STREAM("Pop body frame result failed!");
+                ros::shutdown();
+                return;
               }
-
-              if (body_index_map_publisher_.getNumSubscribers() > 0)
+              else
               {
-                // Body index map
-                ImagePtr body_index_map_frame(new Image);
-                result = getBodyIndexMap(body_frame, body_index_map_frame);
-
-                if (result != K4A_RESULT_SUCCEEDED)
+                if (body_marker_publisher_.getNumSubscribers() > 0)
                 {
-                  ROS_ERROR_STREAM("Failed to get body index map");
-                  ros::shutdown();
-                  return;
+                  // Joint marker array
+                  MarkerArrayPtr markerArrayPtr(new MarkerArray);
+                  auto num_bodies = body_frame.get_num_bodies();
+                  for (size_t i = 0; i < num_bodies; ++i)
+                  {
+                    k4abt_body_t body = body_frame.get_body(i);
+                    for (int j = 0; j < (int) K4ABT_JOINT_COUNT; ++j)
+                    {
+                      MarkerPtr markerPtr(new Marker);
+                      getBodyMarker(body, markerPtr, j, capture_time);
+                      markerArrayPtr->markers.push_back(*markerPtr);
+                    }
+                  }
+                  body_marker_publisher_.publish(markerArrayPtr);
                 }
-                else if (result == K4A_RESULT_SUCCEEDED)
-                {
-                  // Re-sychronize the timestamps with the capture timestamp
-                  body_index_map_frame->header.stamp = capture_time;
-                  body_index_map_frame->header.frame_id =
-                      calibration_data_.tf_prefix_ + calibration_data_.depth_camera_frame_;
 
-                  body_index_map_publisher_.publish(body_index_map_frame);
+                if (body_index_map_publisher_.getNumSubscribers() > 0)
+                {
+                  // Body index map
+                  ImagePtr body_index_map_frame(new Image);
+                  result = getBodyIndexMap(body_frame, body_index_map_frame);
+
+                  if (result != K4A_RESULT_SUCCEEDED)
+                  {
+                    ROS_ERROR_STREAM("Failed to get body index map");
+                    ros::shutdown();
+                    return;
+                  }
+                  else if (result == K4A_RESULT_SUCCEEDED)
+                  {
+                    // Re-sychronize the timestamps with the capture timestamp
+                    body_index_map_frame->header.stamp = capture_time;
+                    body_index_map_frame->header.frame_id =
+                        calibration_data_.tf_prefix_ + calibration_data_.depth_camera_frame_;
+
+                    body_index_map_publisher_.publish(body_index_map_frame);
+                  }
                 }
               }
             }
           }
+  #endif
         }
-#endif
       }
-    }
 
-    if (params_.color_enabled)
-    {
-      // Only create rgb frame when we are using a device or we have a color image.
-      // Recordings may not have synchronized captures. For unsynchronized captures without color image skip rgb frame.
-      if (params_.color_format == "jpeg")
+      if (params_.color_enabled)
       {
-        if ((rgb_jpeg_publisher_.getNumSubscribers() > 0 || rgb_raw_camerainfo_publisher_.getNumSubscribers() > 0) &&
-            (k4a_device_ || capture.get_color_image() != nullptr))
+        // Only create rgb frame when we are using a device or we have a color image.
+        // Recordings may not have synchronized captures. For unsynchronized captures without color image skip rgb frame.
+        if (params_.color_format == "jpeg")
         {
-          result = getJpegRgbFrame(capture, rgb_jpeg_frame);
+          if (
+            //(rgb_jpeg_publisher_.getNumSubscribers() > 0 || rgb_raw_camerainfo_publisher_.getNumSubscribers() > 0) &&
+              (k4a_device_ || capture.get_color_image() != nullptr))
+          {
+            result = getJpegRgbFrame(capture, rgb_jpeg_frame, path);
+
+            if (result != K4A_RESULT_SUCCEEDED)
+            {
+              ROS_ERROR_STREAM("Failed to get Jpeg frame");
+              ros::shutdown();
+              return;
+            }
+
+            capture_time = timestampToROS(capture.get_color_image().get_device_timestamp());
+            printTimestampDebugMessage("Color image", capture_time);
+
+            rgb_jpeg_frame->header.stamp = capture_time;
+            rgb_jpeg_frame->header.frame_id = calibration_data_.tf_prefix_ + calibration_data_.rgb_camera_frame_;
+            rgb_jpeg_publisher_.publish(rgb_jpeg_frame);
+            // Re-synchronize the header timestamps since we cache the camera calibration message
+            rgb_raw_camera_info.header.stamp = capture_time;
+            rgb_raw_camerainfo_publisher_.publish(rgb_raw_camera_info);
+          }
+        }
+        else if (params_.color_format == "bgra")
+        {
+          if (
+            //(rgb_raw_publisher_.getNumSubscribers() > 0 || rgb_raw_camerainfo_publisher_.getNumSubscribers() > 0) &&
+              (k4a_device_ || capture.get_color_image() != nullptr))
+          {
+            result = getRbgFrame(capture, rgb_raw_frame, path);
+
+            if (result != K4A_RESULT_SUCCEEDED)
+            {
+              ROS_ERROR_STREAM("Failed to get RGB frame");
+              ros::shutdown();
+              return;
+            }
+
+            capture_time = timestampToROS(capture.get_color_image().get_device_timestamp());
+            printTimestampDebugMessage("Color image", capture_time);
+
+            rgb_raw_frame->header.stamp = capture_time;
+            rgb_raw_frame->header.frame_id = calibration_data_.tf_prefix_ + calibration_data_.rgb_camera_frame_;
+            rgb_raw_publisher_.publish(rgb_raw_frame);
+
+            // Re-synchronize the header timestamps since we cache the camera calibration message
+            rgb_raw_camera_info.header.stamp = capture_time;
+            rgb_raw_camerainfo_publisher_.publish(rgb_raw_camera_info);
+          }
+
+          // We can only rectify the color into the depth co-ordinates if the depth camera is enabled and processing depth
+          // data Only create rgb rect frame when we are using a device or we have a synchronized image. Recordings may
+          // not have synchronized captures. For unsynchronized captures image skip rgb rect frame.
+          if (params_.depth_enabled && (calibration_data_.k4a_calibration_.depth_mode != K4A_DEPTH_MODE_PASSIVE_IR) &&
+              //(rgb_rect_publisher_.getNumSubscribers() > 0 || rgb_rect_camerainfo_publisher_.getNumSubscribers() > 0) &&
+              (k4a_device_ || (capture.get_color_image() != nullptr && capture.get_depth_image() != nullptr)))
+          {
+            result = getRbgFrame(capture, rgb_rect_frame, path, true /* rectified */);
+
+            if (result != K4A_RESULT_SUCCEEDED)
+            {
+              ROS_ERROR_STREAM("Failed to get rectifed depth frame");
+              ros::shutdown();
+              return;
+            }
+
+            capture_time = timestampToROS(capture.get_color_image().get_device_timestamp());
+            printTimestampDebugMessage("Color image", capture_time);
+
+            rgb_rect_frame->header.stamp = capture_time;
+            rgb_rect_frame->header.frame_id = calibration_data_.tf_prefix_ + calibration_data_.depth_camera_frame_;
+            rgb_rect_publisher_.publish(rgb_rect_frame);
+
+            // Re-synchronize the header timestamps since we cache the camera calibration message
+            rgb_rect_camera_info.header.stamp = capture_time;
+            rgb_rect_camerainfo_publisher_.publish(rgb_rect_camera_info);
+          }
+        }
+
+      }
+
+      // Only create pointcloud when we are using a device or we have a synchronized image.
+      // Recordings may not have synchronized captures. In unsynchronized captures skip point cloud.
+      if (
+        //pointcloud_publisher_.getNumSubscribers() > 0 &&
+          (k4a_device_ || (capture.get_color_image() != nullptr && capture.get_depth_image() != nullptr)))
+      {
+
+        if (params_.rgb_point_cloud)
+        {
+          if (params_.point_cloud_in_depth_frame)
+          {
+            result = getRgbPointCloudInDepthFrame(capture, point_cloud, path);
+          }
+          else
+          {
+            result = getRgbPointCloudInRgbFrame(capture, point_cloud, path);
+          }
 
           if (result != K4A_RESULT_SUCCEEDED)
           {
-            ROS_ERROR_STREAM("Failed to get Jpeg frame");
+            ROS_ERROR_STREAM("Failed to get RGB Point Cloud");
             ros::shutdown();
             return;
           }
-
-          capture_time = timestampToROS(capture.get_color_image().get_device_timestamp());
-          printTimestampDebugMessage("Color image", capture_time);
-
-          rgb_jpeg_frame->header.stamp = capture_time;
-          rgb_jpeg_frame->header.frame_id = calibration_data_.tf_prefix_ + calibration_data_.rgb_camera_frame_;
-          rgb_jpeg_publisher_.publish(rgb_jpeg_frame);
-
-          // Re-synchronize the header timestamps since we cache the camera calibration message
-          rgb_raw_camera_info.header.stamp = capture_time;
-          rgb_raw_camerainfo_publisher_.publish(rgb_raw_camera_info);
         }
-      }
-      else if (params_.color_format == "bgra")
-      {
-        if ((rgb_raw_publisher_.getNumSubscribers() > 0 || rgb_raw_camerainfo_publisher_.getNumSubscribers() > 0) &&
-            (k4a_device_ || capture.get_color_image() != nullptr))
+        else if (params_.point_cloud)
         {
-          result = getRbgFrame(capture, rgb_raw_frame);
+          result = getPointCloud(capture, point_cloud);
 
           if (result != K4A_RESULT_SUCCEEDED)
           {
-            ROS_ERROR_STREAM("Failed to get RGB frame");
+            ROS_ERROR_STREAM("Failed to get Point Cloud");
             ros::shutdown();
             return;
           }
-
-          capture_time = timestampToROS(capture.get_color_image().get_device_timestamp());
-          printTimestampDebugMessage("Color image", capture_time);
-
-          rgb_raw_frame->header.stamp = capture_time;
-          rgb_raw_frame->header.frame_id = calibration_data_.tf_prefix_ + calibration_data_.rgb_camera_frame_;
-          rgb_raw_publisher_.publish(rgb_raw_frame);
-
-          // Re-synchronize the header timestamps since we cache the camera calibration message
-          rgb_raw_camera_info.header.stamp = capture_time;
-          rgb_raw_camerainfo_publisher_.publish(rgb_raw_camera_info);
         }
 
-        // We can only rectify the color into the depth co-ordinates if the depth camera is enabled and processing depth
-        // data Only create rgb rect frame when we are using a device or we have a synchronized image. Recordings may
-        // not have synchronized captures. For unsynchronized captures image skip rgb rect frame.
-        if (params_.depth_enabled && (calibration_data_.k4a_calibration_.depth_mode != K4A_DEPTH_MODE_PASSIVE_IR) &&
-            (rgb_rect_publisher_.getNumSubscribers() > 0 || rgb_rect_camerainfo_publisher_.getNumSubscribers() > 0) &&
-            (k4a_device_ || (capture.get_color_image() != nullptr && capture.get_depth_image() != nullptr)))
+        if (params_.point_cloud || params_.rgb_point_cloud)
         {
-          result = getRbgFrame(capture, rgb_rect_frame, true /* rectified */);
-
-          if (result != K4A_RESULT_SUCCEEDED)
-          {
-            ROS_ERROR_STREAM("Failed to get rectifed depth frame");
-            ros::shutdown();
-            return;
-          }
-
-          capture_time = timestampToROS(capture.get_color_image().get_device_timestamp());
-          printTimestampDebugMessage("Color image", capture_time);
-
-          rgb_rect_frame->header.stamp = capture_time;
-          rgb_rect_frame->header.frame_id = calibration_data_.tf_prefix_ + calibration_data_.depth_camera_frame_;
-          rgb_rect_publisher_.publish(rgb_rect_frame);
-
-          // Re-synchronize the header timestamps since we cache the camera calibration message
-          rgb_rect_camera_info.header.stamp = capture_time;
-          rgb_rect_camerainfo_publisher_.publish(rgb_rect_camera_info);
+          pointcloud_publisher_.publish(point_cloud);
         }
       }
+
+      if (loop_rate.cycleTime() > loop_rate.expectedCycleTime())
+      {
+        ROS_WARN_STREAM_THROTTLE(10, "Image processing thread is running behind."
+                                        << std::endl
+                                        << "Expected max loop time: " << loop_rate.expectedCycleTime() << std::endl
+                                        << "Actual loop time: " << loop_rate.cycleTime() << std::endl);
+      }
+
+      ros::spinOnce();
+      loop_rate.sleep();
     }
 
-    // Only create pointcloud when we are using a device or we have a synchronized image.
-    // Recordings may not have synchronized captures. In unsynchronized captures skip point cloud.
-    if (pointcloud_publisher_.getNumSubscribers() > 0 &&
-        (k4a_device_ || (capture.get_color_image() != nullptr && capture.get_depth_image() != nullptr)))
-    {
-      if (params_.rgb_point_cloud)
-      {
-        if (params_.point_cloud_in_depth_frame)
-        {
-          result = getRgbPointCloudInDepthFrame(capture, point_cloud);
-        }
-        else
-        {
-          result = getRgbPointCloudInRgbFrame(capture, point_cloud);
-        }
-
-        if (result != K4A_RESULT_SUCCEEDED)
-        {
-          ROS_ERROR_STREAM("Failed to get RGB Point Cloud");
-          ros::shutdown();
-          return;
-        }
-      }
-      else if (params_.point_cloud)
-      {
-        result = getPointCloud(capture, point_cloud);
-
-        if (result != K4A_RESULT_SUCCEEDED)
-        {
-          ROS_ERROR_STREAM("Failed to get Point Cloud");
-          ros::shutdown();
-          return;
-        }
-      }
-
-      if (params_.point_cloud || params_.rgb_point_cloud)
-      {
-        pointcloud_publisher_.publish(point_cloud);
-      }
-    }
-
-    if (loop_rate.cycleTime() > loop_rate.expectedCycleTime())
-    {
-      ROS_WARN_STREAM_THROTTLE(10, "Image processing thread is running behind."
-                                       << std::endl
-                                       << "Expected max loop time: " << loop_rate.expectedCycleTime() << std::endl
-                                       << "Actual loop time: " << loop_rate.cycleTime() << std::endl);
-    }
-
-    ros::spinOnce();
-    loop_rate.sleep();
-  }
+  //}
 }
 
 k4a_imu_sample_t K4AROSDevice::computeMeanIMUSample(const std::vector<k4a_imu_sample_t>& samples)
@@ -1188,7 +1552,7 @@ k4a_imu_sample_t K4AROSDevice::computeMeanIMUSample(const std::vector<k4a_imu_sa
 
 void K4AROSDevice::imuPublisherThread()
 {
-  ros::Rate loop_rate(300);
+  ros::Rate loop_rate(300);    // try other loop rate 300
 
   k4a_result_t result;
   k4a_imu_sample_t sample;
@@ -1202,6 +1566,7 @@ void K4AROSDevice::imuPublisherThread()
 
   while (running_ && ros::ok() && !ros::isShuttingDown())
   {
+
     if (k4a_device_)
     {
       // IMU messages are delivered in batches at 300 Hz. Drain the queue of IMU messages by
@@ -1383,3 +1748,287 @@ void printTimestampDebugMessage(const std::string& name, const ros::Time& timest
                         << "The lag ranges from " << it->second.first.toSec() * 1000.0 << "ms"
                         << " to " << it->second.second.toSec() * 1000.0 << "ms.");
 }
+
+// ########################################################################################################
+// PFM format  
+
+void skip_space(fstream & fileStream)
+{
+  // skip white space in the headers or pnm files
+  char c;
+  do
+  {
+    c = fileStream.get();
+  } while (c == '\n' || c == ' ' || c == '\t' || c == '\r');
+  fileStream.unget();
+}
+
+// check whether machine is little endian
+int littleendian()
+{
+  int intval = 1;
+  uchar * uval = (uchar * ) & intval;
+  return uval[0] == 1;
+}
+
+// if endianness doesn't agree, swap bytes
+void swapBytes(float * fptr)
+{
+  uchar * ptr = (uchar * ) fptr;
+  uchar tmp = 0;
+  tmp = ptr[0];
+  ptr[0] = ptr[3];
+  ptr[3] = tmp;
+  tmp = ptr[1];
+  ptr[1] = ptr[2];
+  ptr[2] = tmp;
+}
+
+/*
+ *  Reads a .pfm file image file into an
+ *  opencv Mat structure with type
+ *  CV_32F, handles either 1 band or 3 band
+ *  images
+ *
+ *  Params:
+ *      filename:   type: string    description: file path to pfm file
+ *      im:         type: Mat       description: image destination
+ */
+
+int readFilePFM(const std::string filename, cv::Mat &im)
+{
+  // create fstream object to read in pfm file
+  // open the file in binary
+  fstream file(filename.c_str(), ios:: in | ios::binary);
+
+  // init variables
+  string bands; // what type is the image   "Pf" = grayscale    (1-band)
+                //                          "PF" = color        (3-band)
+  int width, height;    // width and height of the image
+  float scalef, fvalue; // scale factor and temp value to hold pixel value
+  cv::Vec3f vfvalue;        // temp value to hold 3-band pixel value
+
+  // extract header information, skips whitespace
+  file >> bands;
+  file >> width;
+  file >> height;
+  file >> scalef;
+
+  // determine endianness
+  int littleEndianFile = (scalef < 0);
+  int littleEndianMachine = littleendian();
+  int needSwap = (littleEndianFile != littleEndianMachine);
+
+  //cout << setfill('=') << setw(19) << "=" << endl;
+  //cout << "Reading image to pfm file: " << filename << endl;
+  //cout << "Little Endian?: " << ((needSwap) ? "false" : "true") << endl;
+  //cout << "width: " << width << endl;
+  //cout << "height: " << height << endl;
+  //cout << "scale: " << scalef << endl;
+
+  // skip SINGLE newline character after reading third arg
+  char c = file.get();
+  if (c == '\r') // <cr> in some files before newline
+    c = file.get();
+  if (c != '\n')
+  {
+    if (c == ' ' || c == '\t' || c == '\r')
+    {
+      //cout << "newline expected";
+      return -1;
+    }
+    else
+    {
+      //cout << "whitespace expected";
+      return -1;
+    }
+  }
+
+  // handle 1-band image
+  if (bands == "Pf")
+  {
+    //cout << "Reading grayscale image (1-band)" << endl;
+    //cout << "Reading into CV_32FC1 image" << endl;
+    im = cv::Mat::zeros(height, width, CV_32FC1);
+    for (int i = height - 1; i >= 0; --i)
+    {
+      for (int j = 0; j < width; ++j)
+      {
+        file.read((char * ) & fvalue, sizeof(fvalue));
+        if (needSwap)
+        {
+          swapBytes( & fvalue);
+        }
+        im.at < float > (i, j) = (float) fvalue;
+      }
+    }
+  }
+  // handle 3-band image
+  else if (bands == "PF")
+  {
+    //cout << "Reading color image (3-band)" << endl;
+    //cout << "Reading into CV_32FC3 image" << endl;
+    im = cv::Mat::zeros(height, width, CV_32FC3);
+    for (int i = height - 1; i >= 0; --i)
+    {
+      for (int j = 0; j < width; ++j)
+      {
+        file.read((char * ) & vfvalue, sizeof(vfvalue));
+        if (needSwap)
+        {
+          swapBytes( & vfvalue[0]);
+          swapBytes( & vfvalue[1]);
+          swapBytes( & vfvalue[2]);
+        }
+        im.at <cv::Vec3f> (i, j) = vfvalue;
+      }
+    }
+  }
+  else
+  {
+    //cout << "unknown bands description";
+    return -1;
+  }
+  //cout << setfill('=') << setw(19) << "=" << endl << endl;
+  return 0;
+}
+
+/*
+ *  Writes a .pfm file image file from an
+ *  opencv Mat structure with type
+ *  CV_32F, handles either 1 band or 3 band
+ *  images
+ *
+ *  Params:
+ *      filename:   type: string    description: file path to pfm file
+ *      im:     type: Mat       description: image destination
+ *      scalef: type: float     description: scale factor and endianness
+ */
+int writeFilePFM(const std::string filename, const cv::Mat & im, float scalef = 1 / 255.0)
+{
+  // create fstream object to write out pfm file
+  // open the file in binary
+  fstream file(filename.c_str(), ios::out | ios::binary);
+
+  // init variables
+  int type = im.type();
+  string bands;
+  int width = im.size().width, height = im.size().height; // width and height of the image
+  float fvalue;   // scale factor and temp value to hold pixel value
+  cv::Vec3f vfvalue;  // temp value to hold 3-band pixel value
+
+  // determine identifier string based on image type
+  switch (type)
+  {
+    case CV_32FC1:
+          bands = "Pf"; // grayscale
+          break;
+    case CV_32FC3:
+          bands = "PF"; // color
+          break;
+    default:
+          cout << "Unsupported image type, must be CV_32FC1 or CV_32FC3";
+          return -1;
+  }
+
+  // sign of scalefact indicates endianness, see pfms specs
+  if (littleendian())
+    scalef = -scalef;
+
+  // insert header information
+  file << bands << "\n";
+  file << width << " ";
+  file << height << "\n";
+  file << scalef << "\n";
+
+  /*cout << setfill('=') << setw(19) << "=" << endl;
+  cout << "Writing image to pfm file: " << filename << endl;
+  cout << "Little Endian?: " << ((littleendian()) ? "true" : "false") << endl;
+  cout << "width: " << width << endl;
+  cout << "height: " << height << endl;
+  cout << "scale: " << scalef << endl;
+  */
+
+  // handle 1-band image
+  if (bands == "Pf")
+  {
+    //cout << "Writing grayscale image (1-band)" << endl;
+    //cout << "Writing into CV_32FC1 image" << endl;
+    for (int i = height - 1; i >= 0; --i)
+    {
+      for (int j = 0; j < width; ++j)
+      {
+        fvalue = im.at < float > (i, j);
+        file.write((char * ) & fvalue, sizeof(fvalue));
+
+      }
+    }
+  }
+  // handle 3-band image
+  else if (bands == "PF")
+  {
+    //cout << "writing color image (3-band)" << endl;
+    //cout << "writing into CV_32FC3 image" << endl;
+    for (int i = height - 1; i >= 0; --i)
+    {
+      for (int j = 0; j < width; ++j)
+      {
+        vfvalue = im.at < cv::Vec3f > (i, j);
+        file.write((char * ) & vfvalue, sizeof(vfvalue));
+      }
+    }
+  }
+  else
+  {
+    cout << "unknown bands description";
+    return -1;
+  }
+  //cout << setfill('=') << setw(19) << "=" << endl << endl;
+  return 0;
+}
+//############################################################
+
+// check whether machine is little endian
+static bool isLittleEndian()
+{
+  int intval = 1;
+  unsigned char *uval = reinterpret_cast<unsigned char *>(&intval);
+  return uval[0] == 1;
+}
+
+static void writePfmFile(const float * const image_data, int width, int height, std::string path, float scalef=1)
+{
+  std::fstream file(path.c_str(), std::ios::out | std::ios::binary);
+
+  std::string bands;
+  float fvalue;       // scale factor and temp value to hold pixel value
+  bands = "Pf";       // grayscale
+
+  // sign of scalefact indicates endianness, see pfm specs
+  if(isLittleEndian())
+  scalef = -scalef;
+
+  // insert header information 
+  file << bands   << "\n";
+  file << width   << " ";
+  file << height  << "\n";
+  file << scalef  << "\n";
+
+  if(bands == "Pf"){          // handle 1-band image 
+    for (int i=0; i < height; i++) {
+      for(int j=0; j < width; ++j){
+          fvalue = image_data[i * width + j];
+          file.write(reinterpret_cast<char *>(&fvalue), sizeof(fvalue));
+         }
+      }
+  }
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////
+
+void callback(std_msgs::String  msg)
+{
+  //ROS_INFO("I heard: [%s]", msg.data.c_str());
+  syncStatus = msg.data.c_str();
+}
+

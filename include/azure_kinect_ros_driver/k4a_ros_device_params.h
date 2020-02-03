@@ -54,6 +54,10 @@
              "match the resolution of the depth camera (true) or the RGB camera (false)",                              \
              bool, true)                                                                                               \
   LIST_ENTRY(tf_prefix, "The prefix prepended to tf frame ID's", std::string, std::string())                           \
+  LIST_ENTRY(file_name, "camera name, used as tag to recording ", std::string, std::string())                           \
+  LIST_ENTRY(recording_folder, "Path to the output recordings folder ", std::string,                                   \
+             std::string(""))                                                                                          \
+  LIST_ENTRY(recording_enabled, "True if recording is desired camera should be enabled", bool, false)                   \
   LIST_ENTRY(recording_file, "Path to a recording file to open instead of opening a device", std::string,              \
              std::string(""))                                                                                          \
   LIST_ENTRY(recording_loop_enabled, "True if the recording should be rewound at EOF", bool, false)                    \
@@ -79,6 +83,11 @@
               "Delay subordinate camera off master camera by specified amount in usec.",                               \
               int, 0)
 
+/*
+*    ADDED :: recording folder path to save streaming data !!!  as << LIST_ENTRY(recording_directory >> 
+*      LIST_ENTRY(recording_directory, "Path to a recording folder to save recorded videos", std::string,                    \ 
+             std::string(""))                                                                                          \
+*/
 class K4AROSDeviceParams
 {
 public:

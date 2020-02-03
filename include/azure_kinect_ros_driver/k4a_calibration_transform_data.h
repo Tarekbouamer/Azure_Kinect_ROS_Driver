@@ -13,6 +13,7 @@
 #include <k4a/k4a.h>
 #include <k4a/k4a.hpp>
 #include <k4arecord/playback.hpp>
+#include <k4arecord/record.hpp>
 #include <ros/ros.h>
 #include <tf2_ros/static_transform_broadcaster.h>
 #include <tf2/LinearMath/Quaternion.h>
@@ -27,9 +28,11 @@
 class K4ACalibrationTransformData
 {
 public:
+
   void initialize(const k4a::device& device, k4a_depth_mode_t depthMode, k4a_color_resolution_t resolution,
                   K4AROSDeviceParams params);
   void initialize(const k4a::playback& k4a_playback_handle, K4AROSDeviceParams params);
+  
   int getDepthWidth();
   int getDepthHeight();
   int getColorWidth();

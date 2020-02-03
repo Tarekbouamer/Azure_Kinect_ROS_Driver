@@ -23,6 +23,22 @@
 #include <sensor_msgs/Imu.h>
 #include <sensor_msgs/Temperature.h>
 #include <image_transport/image_transport.h>
+#include <std_msgs/String.h>
+
+//save using  OpenCV + Boost
+
+#include <opencv2/core/core.hpp>
+#include <opencv2/imgproc/imgproc.hpp>
+#include <opencv2/objdetect/objdetect.hpp>
+#include <opencv2/highgui/highgui.hpp>
+#include "boost/date_time/posix_time/posix_time.hpp"
+
+// Save PFM format  Source: https://github.com/dscharstein/pfmLib
+#include <iostream>
+#include <stdio.h>
+#include <fstream>
+#include <iomanip>
+#include <cmath>
 
 #if defined(K4A_BODY_TRACKING)
 #include <k4abt.hpp>
@@ -37,9 +53,15 @@
 class K4AROSDevice
 {
 public:
+  ///#########################################
+  std::chrono::microseconds save_capture_time;
+
+
   K4AROSDevice(const ros::NodeHandle& n = ros::NodeHandle(), const ros::NodeHandle& p = ros::NodeHandle("~"));
 
   ~K4AROSDevice();
+
+
 
   k4a_result_t startCameras();
   k4a_result_t startImu();
@@ -52,19 +74,25 @@ public:
 
   void getRgbCameraInfo(sensor_msgs::CameraInfo& camera_info);
 
-  k4a_result_t getDepthFrame(const k4a::capture& capture, sensor_msgs::ImagePtr& depth_frame, bool rectified);
+  k4a_result_t getDepthFrame(const k4a::capture& capture, sensor_msgs::ImagePtr& depth_frame,
+                            std::string path , bool rectified);
 
   k4a_result_t getPointCloud(const k4a::capture& capture, sensor_msgs::PointCloud2Ptr& point_cloud);
 
-  k4a_result_t getRgbPointCloudInRgbFrame(const k4a::capture& capture, sensor_msgs::PointCloud2Ptr& point_cloud);
-  k4a_result_t getRgbPointCloudInDepthFrame(const k4a::capture& capture, sensor_msgs::PointCloud2Ptr& point_cloud);
+  k4a_result_t getRgbPointCloudInRgbFrame(const k4a::capture& capture, sensor_msgs::PointCloud2Ptr& point_cloud,
+                                          std::string path);
+  k4a_result_t getRgbPointCloudInDepthFrame(const k4a::capture& capture, sensor_msgs::PointCloud2Ptr& point_cloud,
+                                            std::string path);
 
   k4a_result_t getImuFrame(const k4a_imu_sample_t& capture, sensor_msgs::ImuPtr& imu_frame);
 
-  k4a_result_t getRbgFrame(const k4a::capture& capture, sensor_msgs::ImagePtr& rgb_frame, bool rectified);
-  k4a_result_t getJpegRgbFrame(const k4a::capture& capture, sensor_msgs::CompressedImagePtr& jpeg_image);
+  k4a_result_t getRbgFrame(const k4a::capture& capture, sensor_msgs::ImagePtr& rgb_frame, 
+                            std::string path, bool rectified);
+  k4a_result_t getJpegRgbFrame(const k4a::capture& capture, sensor_msgs::CompressedImagePtr& jpeg_image,
+                                std::string path);
 
-  k4a_result_t getIrFrame(const k4a::capture& capture, sensor_msgs::ImagePtr& ir_image);
+  k4a_result_t getIrFrame(const k4a::capture& capture, sensor_msgs::ImagePtr& ir_image,
+                          std::string path);
 
 #if defined(K4A_BODY_TRACKING)
   k4a_result_t getBodyMarker(const k4abt_body_t& body, visualization_msgs::MarkerPtr marker_msg, int jointType,
@@ -75,6 +103,19 @@ public:
   k4a_result_t renderBodyIndexMapToROS(sensor_msgs::ImagePtr body_index_map_image, k4a::image& k4a_body_index_map,
                                        const k4abt::frame& body_frame);
 #endif
+
+
+ 
+
+
+
+
+
+
+  // ROS Node variables
+  ros::NodeHandle node_;
+  ros::NodeHandle private_node_;
+
 
 private:
   k4a_result_t renderBGRA32ToROS(sensor_msgs::ImagePtr& rgb_frame, k4a::image& k4a_bgra_frame);
@@ -100,9 +141,7 @@ private:
   // When using IMU throttling, computes a mean measurement from a set of IMU samples
   k4a_imu_sample_t computeMeanIMUSample(const std::vector<k4a_imu_sample_t>& samples);
 
-  // ROS Node variables
-  ros::NodeHandle node_;
-  ros::NodeHandle private_node_;
+
 
   image_transport::ImageTransport image_transport_;
 
@@ -126,6 +165,13 @@ private:
 
   ros::Publisher pointcloud_publisher_;
 
+
+  ros::Subscriber sub;
+
+
+
+
+
 #if defined(K4A_BODY_TRACKING)
   ros::Publisher body_marker_publisher_;
 
@@ -139,7 +185,10 @@ private:
   k4a::device k4a_device_;
   K4ACalibrationTransformData calibration_data_;
 
-  // K4A Recording
+  // K4A Record camera
+  k4a::record k4a_recording_handle_;
+
+  // K4A Recording Playback
   k4a::playback k4a_playback_handle_;
   std::mutex k4a_playback_handle_mutex_;
 
@@ -166,5 +215,23 @@ private:
 };
 
 void printTimestampDebugMessage(const std::string& name, const ros::Time& timestamp);
+
+  //###########################################################################
+  // save All possible frames to disk in playback only 
+bool saveDepthFrame(k4a::image& k4a_frame, const std::string name);
+bool saveRbgFrame(k4a::image& k4a_frame, const std::string path);
+bool saveIrFrame(k4a::image& k4a_frame, const std::string path);
+
+
+int readFilePFM(const std::string filename, cv::Mat& im);
+int writeFilePFM(const std::string filename, const cv::Mat &im, float scalef);
+
+//#######################################################
+
+
+void callback(std_msgs::String  msg);
+
+
+///###############################################################################
 
 #endif  // K4A_ROS_DEVICE_H

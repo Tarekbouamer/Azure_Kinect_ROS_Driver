@@ -34,6 +34,7 @@ void K4ACalibrationTransformData::initialize(const k4a::playback& k4a_playback_h
   initialize(params);
 }
 
+
 void K4ACalibrationTransformData::initialize(const K4AROSDeviceParams params)
 {
   k4a_transformation_ = k4a::transformation(k4a_calibration_);
@@ -75,6 +76,7 @@ void K4ACalibrationTransformData::initialize(const K4AROSDeviceParams params)
   publishImuToDepthTf();
   publishRgbToDepthTf();
 }
+
 
 int K4ACalibrationTransformData::getDepthWidth() { return k4a_calibration_.depth_camera_calibration.resolution_width; }
 

@@ -84,7 +84,7 @@ message("Finding K4A SDK binaries")
 # and the system installed version on linux. Since we have to treat these
 # differently (one needs install, one doesn't) we must disable the cache
 # so that find_package(k4a) will fail in all cases if not installed via the .deb.
-unset(k4a_DIR CACHE)
+unset(k4a_DIR)
 
 # Force running the Findk4a.cmake module
 find_package(k4a 1.2.0 QUIET MODULE REQUIRED)
