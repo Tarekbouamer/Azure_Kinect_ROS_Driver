@@ -6,80 +6,100 @@ import signal
 
 import threading
 from std_msgs.msg import String
+import datetime
 
-def signal_handler(sig, frame):
-    print('You pressed Ctrl+C!')
+camera_list = []
 
-    c1 = cam1.shutdown()
-    print("C1 = ",c1)
-    c2= cam2.shutdown()
-    print("C2 = ",c2)
-
+def signal_handler(cam1, cam2):
+    print('You pressed Ctrl+C!, shutdown Cameras')
+    cam1.shutdown()
+    cam2.shutdown()
+    #stop_cam(camera_list)
+    rospy.sleep(10)
     sys.exit(0)
 
-signal.signal(signal.SIGINT, signal_handler)
+def stop_cam(camera_list):
+    for cam in reversed(camera_list):
+        cam.shutdown()
 
 
-rospy.init_node('launcher', anonymous=False)
-uuid = roslaunch.rlutil.get_or_generate_uuid(None, False)
-roslaunch.configure_logging(uuid)
+def launch_cam(uuid, name, sn, sync):
+    camera = ['/home/tarek/workspaces/ros/azure_ws/src/Azure_Kinect_ROS_Driver/launch/record.launch',
+               'file_name:='+str(name),
+               'sensor_sn:='+str(sn),
+               'recording_folder:=/home/tarek/K4a_data/'+str(name)+'.mkv',
+               'wired_sync_mode:='+str(sync)
+                ]
+    _file = roslaunch.rlutil.resolve_launch_arguments(camera)[0]
+    _args = camera[1:]
+    launch_files = [(_file, _args)]
+    cam = roslaunch.parent.ROSLaunchParent(uuid, launch_files)
+    return cam
 
 
-pub = rospy.Publisher('chatter', String, queue_size=10)
-rate = rospy.Rate(10)  # 10hz
-
-rospy.sleep(5)
+def main():
 
 
-### Configuration Camera 1
-camera1 = ['/home/tarek/workspaces/ros/azure_ws/src/Azure_Kinect_ROS_Driver/launch/record.launch',
-           'file_name:=cam_1',
-           'sensor_sn:=000221294412',
-           'recording_folder:=/home/tarek/K4a_data/cam_1.mkv',
-           'wired_sync_mode:=0'
-           ]
-_file1 = roslaunch.rlutil.resolve_launch_arguments(camera1)[0]
-_args1 = camera1[1:]
-launch_files1 = [(_file1, _args1)]
-cam1 = roslaunch.parent.ROSLaunchParent(uuid, launch_files1)
+    experiment = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    print(experiment)
 
-### Configuration Camera 2
-camera2 = ['/home/tarek/workspaces/ros/azure_ws/src/Azure_Kinect_ROS_Driver/launch/record.launch',
-           'file_name:=cam_2',
-           'sensor_sn:=001221194512',
-           'recording_folder:=/home/tarek/K4a_data/cam_2.mkv',
-           'wired_sync_mode:=0'
-           ]
-_file2 = roslaunch.rlutil.resolve_launch_arguments(camera2)[0]
-_args2 = camera2[1:]
-launch_files2 = [(_file2, _args2)]
-cam2 = roslaunch.parent.ROSLaunchParent(uuid, launch_files2)
+    #start master node launcher
+    rospy.init_node('launcher', anonymous=False)
+    pub = rospy.Publisher('chatter', String, queue_size=10)
+    rate = rospy.Rate(10)  # 10hz
+
+    print("\n Launcher node started with Topic << chatter >> ...")
+    rospy.sleep(2)
+    status = "pause"
+    pub.publish(status)
+
+    uuid = roslaunch.rlutil.get_or_generate_uuid(None, False)
+    roslaunch.configure_logging(uuid)
+
+    print("\n roslaunch configure_logging ...")
+    rospy.sleep(1)
+
+    name = 'cam2_' + str(experiment)
+    cam2 = launch_cam(uuid, name, '001221194512', '2')   # Subordinates .....
+    cam2.start()
+    camera_list.append(cam2)
+    print("\n Subordinates camera Launched ...")
+
+    rospy.sleep(5)
+
+    name = 'cam1_' + str(experiment)
+    cam1 = launch_cam(uuid, name, '000221294412', '1')   # Master
+    cam1.start()
+    camera_list.append(cam1)
+    print("\n Master camera Launched ...")
+
+    rospy.sleep(5)
+
+    status = "record"
+    pub.publish(status)
+    rospy.sleep(10)
+
+    status = "stop"
+    pub.publish(status)
+    rospy.sleep(5)
+
+    status = "record"
+    pub.publish(status)
+    rospy.sleep(10)
+
+    status = "stop"
+    pub.publish(status)
+    rospy.sleep(5)
 
 
-## Starter for 5 seconds
-status = "pause"
-pub.publish(status)
-rospy.sleep(2)
+    signal.signal(signal.SIGINT, signal_handler(cam1, cam2))
 
-cam1.start()
-cam2.start()
-rospy.sleep(10)
-
-## Record  for desired duration
-status = "record"
-pub.publish(status)
-rospy.sleep(20)
-
-## Finish   pause before stopping
-status = "stop"
-pub.publish(status)
-rospy.sleep(10)
+    while True:
+        pass
 
 
-while True:
-    pass
-
-
+if __name__ == '__main__':
+    main()
 
 
 

@@ -581,7 +581,7 @@ k4a_result_t K4AROSDevice::getIrFrame(const k4a::capture& capture, sensor_msgs::
 
   if(k4a_playback_handle_)
   {
-    path.append("_Ir.png");
+    path.append("_IR.png");
     if (!saveIrFrame(k4a_ir_frame, path))
     {
       ROS_ERROR("Cannot save IR frame to folder");
@@ -849,7 +849,6 @@ k4a_result_t K4AROSDevice::getRgbPointCloudInRgbFrame(const k4a::capture& captur
   // transform depth image into color camera geometry
   calibration_data_.k4a_transformation_.depth_image_to_color_camera(k4a_depth_frame,
                                                                     &calibration_data_.transformed_depth_image_);
-
   if (k4a_playback_handle_)
   {
     // save Depth to Image Frame
@@ -1475,7 +1474,7 @@ void K4AROSDevice::framePublisherThread()
       if (
         //pointcloud_publisher_.getNumSubscribers() > 0 &&
           (k4a_device_ || (capture.get_color_image() != nullptr && capture.get_depth_image() != nullptr)))
-      {
+      {   
 
         if (params_.rgb_point_cloud)
         {
@@ -2032,3 +2031,75 @@ void callback(std_msgs::String  msg)
   syncStatus = msg.data.c_str();
 }
 
+////////////////////////////////////////////////////////////////////////////////////////
+/*k4a_result_t K4AROSDevice::ImageDepthRegistration(const k4a::capture& capture,std::string path)
+{
+  const k4a::image k4a_depth_frame = capture.get_depth_image();
+  if (!k4a_depth_frame)
+  {
+    ROS_ERROR("no depth frame");
+    return K4A_RESULT_FAILED;
+  }
+
+  const k4a::image k4a_bgra_frame = capture.get_color_image();
+  if (!k4a_bgra_frame)
+  {
+    ROS_ERROR("no BGRA frame");
+    return K4A_RESULT_FAILED;
+  }
+
+  // extrinsic transformation from depth to color camera
+  cv::Mat se3 = cv::Mat(3, 3, CV_32FC1, calibration_data_.k4a_calibration_.extrinsics[K4A_CALIBRATION_TYPE_DEPTH][K4A_CALIBRATION_TYPE_COLOR].rotation);
+  cv::Mat r_vec = cv::Mat(3, 1, CV_32FC1);
+  cv::Rodrigues(se3, r_vec);
+  cv::Mat t_vec = cv::Mat(3, 1, CV_32F, calibration_data_.k4a_calibration_.extrinsics[K4A_CALIBRATION_TYPE_COLOR][K4A_CALIBRATION_TYPE_DEPTH].translation);
+
+  // intrinsic parameters of the depth camera
+  k4a_calibration_intrinsic_parameters_t *intrinsics = &calibration_data_.k4a_calibration_.depth_camera_calibration.intrinsics.parameters;
+  
+
+  vector<float> _camera_matrix = { intrinsics->param.fx, 0.f, intrinsics->param.cx, 0.f, intrinsics->param.fy, intrinsics->param.cy, 0.f, 0.f, 1.f};
+  
+  // K matrix
+  cv::Mat camera_matrix = cv::Mat(3, 3, CV_32F, &_camera_matrix[0]);
+
+
+  vector<float> _dist_coeffs = {   intrinsics->param.k1, intrinsics->param.k2, intrinsics->param.p1,
+                                   intrinsics->param.p2, intrinsics->param.k3, intrinsics->param.k4,
+                                   intrinsics->param.k5, intrinsics->param.k6 };
+    // D vector
+  cv::Mat dist_coeffs = cv::Mat(8, 1, CV_32F, &_dist_coeffs[0]);
+
+  //vector<cv::Point2f> cv_points_2d(cv::points_3d.size());
+  cv::projectPoints();
+  
+  (*reinterpret_cast<vector<cv::Point3f> *>(&cv::points_3d),
+                  r_vec,
+                  t_vec,
+                  camera_matrix,
+                  dist_coeffs,
+                  cv_points_2d);
+
+
+
+  cv::reprojectImageTo3D
+
+*/
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  // Transform color image into the depth camera frame:
+  
+  
+  

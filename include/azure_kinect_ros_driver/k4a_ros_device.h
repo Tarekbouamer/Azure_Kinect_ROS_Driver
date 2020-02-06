@@ -31,6 +31,8 @@
 #include <opencv2/imgproc/imgproc.hpp>
 #include <opencv2/objdetect/objdetect.hpp>
 #include <opencv2/highgui/highgui.hpp>
+#include "opencv2/calib3d.hpp"
+
 #include "boost/date_time/posix_time/posix_time.hpp"
 
 // Save PFM format  Source: https://github.com/dscharstein/pfmLib
@@ -93,7 +95,8 @@ public:
 
   k4a_result_t getIrFrame(const k4a::capture& capture, sensor_msgs::ImagePtr& ir_image,
                           std::string path);
-
+ /////////////////////////
+ //k4a_result_t ImageDepthRegistration(const k4a::capture& capture,std::string path);
 #if defined(K4A_BODY_TRACKING)
   k4a_result_t getBodyMarker(const k4abt_body_t& body, visualization_msgs::MarkerPtr marker_msg, int jointType,
                              ros::Time capture_time);
@@ -103,13 +106,6 @@ public:
   k4a_result_t renderBodyIndexMapToROS(sensor_msgs::ImagePtr body_index_map_image, k4a::image& k4a_body_index_map,
                                        const k4abt::frame& body_frame);
 #endif
-
-
- 
-
-
-
-
 
 
   // ROS Node variables
