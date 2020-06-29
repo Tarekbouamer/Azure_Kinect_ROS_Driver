@@ -20,6 +20,8 @@
 #include <sensor_msgs/point_cloud2_iterator.h>
 #include <k4a/k4a.hpp>
 
+#include <iostream>
+
 
 
 // Project headers
@@ -497,9 +499,9 @@ bool saveDepthFrame(k4a::image& k4a_frame, const std::string path)
       uint16_t pDepth = depth_frame_buffer_mat.at<uint16_t>(i,j);
       raw_depth.at<float>(i,j) = (pDepth == 0) ? bad_point : (float) pDepth * 0.001f;
     }
-  }
+  }   
 
-  writeFilePFM(pfmPath, raw_depth, 1/255);       // pfm format === mm  ?? is this right
+  WriteFilePFM(raw_depth, pfmPath, 1/255.0);
   
   for(size_t i = 0; i < depth_frame_buffer_mat.rows; i++)
   {
@@ -510,7 +512,7 @@ bool saveDepthFrame(k4a::image& k4a_frame, const std::string path)
     }
   }
   
-  cv::imwrite( visPath, vis_depth );  
+  //cv::imwrite( visPath, vis_depth );  
   return cv::imwrite( rawPath, raw_depth );
 };
 
@@ -750,7 +752,7 @@ bool saveDepthToImage(k4a::image* k4a_frame, std::string path)
     }
   }
 
-  writeFilePFM(pfmPath, raw_depth, 1/255.0);       // pfm format === mm  ?? is this right
+  WriteFilePFM(raw_depth, pfmPath, 1/255.0);     
 
   
   for(size_t i = 0; i < depth_frame_buffer_mat.rows; i++)
@@ -762,7 +764,7 @@ bool saveDepthToImage(k4a::image* k4a_frame, std::string path)
     }
   }
   
-  cv::imwrite( visPath, vis_depth );  
+  //cv::imwrite( visPath, vis_depth );  
   return cv::imwrite( rawPath, raw_depth );
 }
 
@@ -1102,6 +1104,83 @@ k4a_result_t K4AROSDevice::renderBodyIndexMapToROS(sensor_msgs::ImagePtr body_in
 }
 #endif
 
+k4a_result_t K4AROSDevice::saveCameraCalibration(k4a_calibration_t CalibData,  std::string path )
+{
+  // camera calibration will saved in the following format in txt file in playback folder only.
+  // H W fx fy cx cy k1 k2 k3 k4 k5 k6 p1 p2 codx cody r
+
+  k4a_calibration_camera_t depthCalibration  = CalibData.depth_camera_calibration;
+  k4a_calibration_camera_t colorCalibration  = CalibData.color_camera_calibration;
+
+  k4a_calibration_intrinsics_t depthIntrinsics = depthCalibration.intrinsics;
+  k4a_calibration_extrinsics_t depthExtrinsics = depthCalibration.extrinsics;
+
+  k4a_calibration_intrinsics_t colorIntrinsics = colorCalibration.intrinsics;
+  k4a_calibration_extrinsics_t colorExtrinsics = colorCalibration.extrinsics;
+
+  k4a_calibration_intrinsic_parameters_t::_param dp =depthIntrinsics.parameters.param;
+  k4a_calibration_intrinsic_parameters_t::_param cp =colorIntrinsics.parameters.param;
+
+  ofstream calibFile;
+  path.append("_calibrations.txt");
+  
+  calibFile.open(path);
+  
+  // depth: H W fx fy cx cy k1 k2 k3 k4 k5 k6 p1 p2 codx cody r
+  calibFile << "depth_intrinsics"; calibFile<<"  ";
+
+  calibFile << depthCalibration.resolution_height;calibFile<<"  "; calibFile << depthCalibration.resolution_width;calibFile<<"  ";
+  calibFile << dp.fx;calibFile<<"  ";     calibFile << dp.fy;calibFile<<"  ";     calibFile << dp.cx;calibFile<<" ";      calibFile << dp.cy;calibFile<<"  "; 
+  calibFile << dp.k1;calibFile<<"  ";     calibFile << dp.k2;calibFile<<"  ";     calibFile << dp.k3;calibFile<<"  "; 
+  calibFile << dp.k4;calibFile<<"  ";     calibFile << dp.k5;calibFile<<"  ";     calibFile << dp.k6;calibFile<<"  ";
+  calibFile << dp.p1;calibFile<<"  ";     calibFile << dp.p2;calibFile<<"  "; 
+  calibFile << dp.codx;calibFile<<"  ";   calibFile << dp.cody;calibFile<<"  "; 
+  calibFile << dp.metric_radius;calibFile<<" "; 
+  
+  calibFile<<"  "; calibFile << "\n";
+
+  // depth  ext    [R T] 
+  calibFile << "depth_extrinsics"; calibFile<<"  ";
+
+  calibFile <<depthExtrinsics.rotation[0];calibFile<<"  ";calibFile <<depthExtrinsics.rotation[1];calibFile<<"  ";calibFile <<depthExtrinsics.rotation[2];calibFile<<"  ";
+  calibFile <<depthExtrinsics.translation[0];calibFile<<"  ";
+
+  calibFile <<depthExtrinsics.rotation[3];calibFile<<"  ";calibFile <<depthExtrinsics.rotation[4];calibFile<<"  ";calibFile <<depthExtrinsics.rotation[5];calibFile<<"  ";
+  calibFile <<depthExtrinsics.translation[1];calibFile<<"  ";
+  
+  calibFile <<depthExtrinsics.rotation[6];calibFile<<"  ";calibFile <<depthExtrinsics.rotation[7];calibFile<<"  ";calibFile <<depthExtrinsics.rotation[8];calibFile<<"  ";
+  calibFile <<depthExtrinsics.translation[2];calibFile<<"  ";
+
+  calibFile<<"  "; calibFile << "\n";
+
+  // color: H W fx fy cx cy k1 k2 k3 k4 k5 k6 p1 p2 codx cody r
+  calibFile << "rgb_intrinsics"; calibFile<<"  ";
+
+  calibFile << colorCalibration.resolution_height;calibFile<<"  "; calibFile << colorCalibration.resolution_width;calibFile<<"  ";
+  calibFile << cp.fx;calibFile<<"  ";     calibFile << cp.fy;calibFile<<"  ";     calibFile << cp.cx;calibFile<<" ";      calibFile << cp.cy;calibFile<<"  "; 
+  calibFile << cp.k1;calibFile<<"  ";     calibFile << cp.k2;calibFile<<"  ";     calibFile << cp.k3;calibFile<<"  "; 
+  calibFile << cp.k4;calibFile<<"  ";     calibFile << cp.k5;calibFile<<"  ";     calibFile << cp.k6;calibFile<<"  ";
+  calibFile << cp.p1;calibFile<<"  ";     calibFile << cp.p2;calibFile<<"  "; 
+  calibFile << cp.codx;calibFile<<"  ";   calibFile << cp.cody;calibFile<<"  "; 
+  calibFile << cp.metric_radius;calibFile<<" "; 
+    
+  calibFile<<"  "; calibFile << "\n";
+ 
+  // rgb  ext    [R T] 
+  calibFile << "rgb_extrinsics"; calibFile<<"  ";
+
+  calibFile <<colorExtrinsics.rotation[0];calibFile<<"  ";calibFile <<colorExtrinsics.rotation[1];calibFile<<"  ";calibFile <<colorExtrinsics.rotation[2];calibFile<<"  ";
+  calibFile <<colorExtrinsics.translation[0];calibFile<<"  ";
+  
+  calibFile <<colorExtrinsics.rotation[3];calibFile<<"  ";calibFile <<colorExtrinsics.rotation[4];calibFile<<"  ";calibFile <<colorExtrinsics.rotation[5];calibFile<<"  ";
+  calibFile <<colorExtrinsics.translation[1];calibFile<<"  ";
+
+  calibFile <<colorExtrinsics.rotation[6];calibFile<<"  ";calibFile <<colorExtrinsics.rotation[7];calibFile<<"  ";calibFile <<colorExtrinsics.rotation[8];calibFile<<"  ";
+  calibFile <<colorExtrinsics.translation[2];calibFile<<"  ";
+
+  calibFile.close();
+  return K4A_RESULT_SUCCEEDED;
+}
 void K4AROSDevice::framePublisherThread()
 {
   ros::Rate loop_rate(params_.fps);
@@ -1119,19 +1198,44 @@ void K4AROSDevice::framePublisherThread()
 
   k4a::capture capture;
 
+  // Create frame files names using iso time  name_*.*
+  std::string path = params_.recording_folder.c_str();
+  boost::posix_time::ptime isoTime = boost::posix_time::ptime(capture_time.toBoost());
+  std::string isoTimeString = boost::posix_time::to_iso_extended_string(isoTime); 
+  path.append("_"); path.append(isoTimeString);
+
   calibration_data_.getDepthCameraInfo(depth_raw_camera_info);
   calibration_data_.getRgbCameraInfo(rgb_raw_camera_info);
   calibration_data_.getDepthCameraInfo(rgb_rect_camera_info);
   calibration_data_.getRgbCameraInfo(depth_rect_camera_info);
   calibration_data_.getDepthCameraInfo(ir_raw_camera_info);
 
-  
+  // save camera calibration in txt file. in playback mode only
+  if (k4a_playback_handle_)
+  {
+    k4a_calibration_t cameraCalibData = calibration_data_.k4a_calibration_;
+
+    result = saveCameraCalibration( cameraCalibData, path);
+
+    if (result != K4A_RESULT_SUCCEEDED)
+    {
+      ROS_ERROR_STREAM("Failed to Save Camera calibration .txt ");
+      ros::shutdown();
+      return;
+    }
+  }
 
   std::string swap = syncStatus;
 
   while (running_ && ros::ok() && !ros::isShuttingDown())
   {
       sub = node_.subscribe("/chatter", 100, callback);
+
+      // Create frame files names using iso time  name_*.*
+      path = params_.recording_folder.c_str();
+      boost::posix_time::ptime isoTime = boost::posix_time::ptime(capture_time.toBoost());
+      std::string isoTimeString = boost::posix_time::to_iso_extended_string(isoTime); 
+      path.append("_"); path.append(isoTimeString);
 
       if (syncStatus =="record" )
       {
@@ -1200,15 +1304,6 @@ void K4AROSDevice::framePublisherThread()
         // TODO: consider appropriate capture function calling;  best time to capture
         k4a_recording_handle_.write_capture(capture);
       }
-
-      // Create frame files names using iso time  name_*.*
-
-      std::string path = params_.recording_folder.c_str();
-
-      boost::posix_time::ptime isoTime = boost::posix_time::ptime(capture_time.toBoost());
-      std::string isoTimeString = boost::posix_time::to_iso_extended_string(isoTime); 
-
-      path.append("_"); path.append(isoTimeString);
       
       if (params_.depth_enabled)
       {
@@ -1748,358 +1843,169 @@ void printTimestampDebugMessage(const std::string& name, const ros::Time& timest
                         << " to " << it->second.second.toSec() * 1000.0 << "ms.");
 }
 
-// ########################################################################################################
-// PFM format  
-
-void skip_space(fstream & fileStream)
-{
-  // skip white space in the headers or pnm files
-  char c;
-  do
-  {
-    c = fileStream.get();
-  } while (c == '\n' || c == ' ' || c == '\t' || c == '\r');
-  fileStream.unget();
-}
-
-// check whether machine is little endian
-int littleendian()
-{
-  int intval = 1;
-  uchar * uval = (uchar * ) & intval;
-  return uval[0] == 1;
-}
-
-// if endianness doesn't agree, swap bytes
-void swapBytes(float * fptr)
-{
-  uchar * ptr = (uchar * ) fptr;
-  uchar tmp = 0;
-  tmp = ptr[0];
-  ptr[0] = ptr[3];
-  ptr[3] = tmp;
-  tmp = ptr[1];
-  ptr[1] = ptr[2];
-  ptr[2] = tmp;
-}
-
-/*
- *  Reads a .pfm file image file into an
- *  opencv Mat structure with type
- *  CV_32F, handles either 1 band or 3 band
- *  images
- *
- *  Params:
- *      filename:   type: string    description: file path to pfm file
- *      im:         type: Mat       description: image destination
- */
-
-int readFilePFM(const std::string filename, cv::Mat &im)
-{
-  // create fstream object to read in pfm file
-  // open the file in binary
-  fstream file(filename.c_str(), ios:: in | ios::binary);
-
-  // init variables
-  string bands; // what type is the image   "Pf" = grayscale    (1-band)
-                //                          "PF" = color        (3-band)
-  int width, height;    // width and height of the image
-  float scalef, fvalue; // scale factor and temp value to hold pixel value
-  cv::Vec3f vfvalue;        // temp value to hold 3-band pixel value
-
-  // extract header information, skips whitespace
-  file >> bands;
-  file >> width;
-  file >> height;
-  file >> scalef;
-
-  // determine endianness
-  int littleEndianFile = (scalef < 0);
-  int littleEndianMachine = littleendian();
-  int needSwap = (littleEndianFile != littleEndianMachine);
-
-  //cout << setfill('=') << setw(19) << "=" << endl;
-  //cout << "Reading image to pfm file: " << filename << endl;
-  //cout << "Little Endian?: " << ((needSwap) ? "false" : "true") << endl;
-  //cout << "width: " << width << endl;
-  //cout << "height: " << height << endl;
-  //cout << "scale: " << scalef << endl;
-
-  // skip SINGLE newline character after reading third arg
-  char c = file.get();
-  if (c == '\r') // <cr> in some files before newline
-    c = file.get();
-  if (c != '\n')
-  {
-    if (c == ' ' || c == '\t' || c == '\r')
-    {
-      //cout << "newline expected";
-      return -1;
-    }
-    else
-    {
-      //cout << "whitespace expected";
-      return -1;
-    }
-  }
-
-  // handle 1-band image
-  if (bands == "Pf")
-  {
-    //cout << "Reading grayscale image (1-band)" << endl;
-    //cout << "Reading into CV_32FC1 image" << endl;
-    im = cv::Mat::zeros(height, width, CV_32FC1);
-    for (int i = height - 1; i >= 0; --i)
-    {
-      for (int j = 0; j < width; ++j)
-      {
-        file.read((char * ) & fvalue, sizeof(fvalue));
-        if (needSwap)
-        {
-          swapBytes( & fvalue);
-        }
-        im.at < float > (i, j) = (float) fvalue;
-      }
-    }
-  }
-  // handle 3-band image
-  else if (bands == "PF")
-  {
-    //cout << "Reading color image (3-band)" << endl;
-    //cout << "Reading into CV_32FC3 image" << endl;
-    im = cv::Mat::zeros(height, width, CV_32FC3);
-    for (int i = height - 1; i >= 0; --i)
-    {
-      for (int j = 0; j < width; ++j)
-      {
-        file.read((char * ) & vfvalue, sizeof(vfvalue));
-        if (needSwap)
-        {
-          swapBytes( & vfvalue[0]);
-          swapBytes( & vfvalue[1]);
-          swapBytes( & vfvalue[2]);
-        }
-        im.at <cv::Vec3f> (i, j) = vfvalue;
-      }
-    }
-  }
-  else
-  {
-    //cout << "unknown bands description";
-    return -1;
-  }
-  //cout << setfill('=') << setw(19) << "=" << endl << endl;
-  return 0;
-}
-
-/*
- *  Writes a .pfm file image file from an
- *  opencv Mat structure with type
- *  CV_32F, handles either 1 band or 3 band
- *  images
- *
- *  Params:
- *      filename:   type: string    description: file path to pfm file
- *      im:     type: Mat       description: image destination
- *      scalef: type: float     description: scale factor and endianness
- */
-int writeFilePFM(const std::string filename, const cv::Mat & im, float scalef = 1 / 255.0)
-{
-  // create fstream object to write out pfm file
-  // open the file in binary
-  fstream file(filename.c_str(), ios::out | ios::binary);
-
-  // init variables
-  int type = im.type();
-  string bands;
-  int width = im.size().width, height = im.size().height; // width and height of the image
-  float fvalue;   // scale factor and temp value to hold pixel value
-  cv::Vec3f vfvalue;  // temp value to hold 3-band pixel value
-
-  // determine identifier string based on image type
-  switch (type)
-  {
-    case CV_32FC1:
-          bands = "Pf"; // grayscale
-          break;
-    case CV_32FC3:
-          bands = "PF"; // color
-          break;
-    default:
-          cout << "Unsupported image type, must be CV_32FC1 or CV_32FC3";
-          return -1;
-  }
-
-  // sign of scalefact indicates endianness, see pfms specs
-  if (littleendian())
-    scalef = -scalef;
-
-  // insert header information
-  file << bands << "\n";
-  file << width << " ";
-  file << height << "\n";
-  file << scalef << "\n";
-
-  /*cout << setfill('=') << setw(19) << "=" << endl;
-  cout << "Writing image to pfm file: " << filename << endl;
-  cout << "Little Endian?: " << ((littleendian()) ? "true" : "false") << endl;
-  cout << "width: " << width << endl;
-  cout << "height: " << height << endl;
-  cout << "scale: " << scalef << endl;
-  */
-
-  // handle 1-band image
-  if (bands == "Pf")
-  {
-    //cout << "Writing grayscale image (1-band)" << endl;
-    //cout << "Writing into CV_32FC1 image" << endl;
-    for (int i = height - 1; i >= 0; --i)
-    {
-      for (int j = 0; j < width; ++j)
-      {
-        fvalue = im.at < float > (i, j);
-        file.write((char * ) & fvalue, sizeof(fvalue));
-
-      }
-    }
-  }
-  // handle 3-band image
-  else if (bands == "PF")
-  {
-    //cout << "writing color image (3-band)" << endl;
-    //cout << "writing into CV_32FC3 image" << endl;
-    for (int i = height - 1; i >= 0; --i)
-    {
-      for (int j = 0; j < width; ++j)
-      {
-        vfvalue = im.at < cv::Vec3f > (i, j);
-        file.write((char * ) & vfvalue, sizeof(vfvalue));
-      }
-    }
-  }
-  else
-  {
-    cout << "unknown bands description";
-    return -1;
-  }
-  //cout << setfill('=') << setw(19) << "=" << endl << endl;
-  return 0;
-}
-//############################################################
-
-// check whether machine is little endian
-static bool isLittleEndian()
-{
-  int intval = 1;
-  unsigned char *uval = reinterpret_cast<unsigned char *>(&intval);
-  return uval[0] == 1;
-}
-
-static void writePfmFile(const float * const image_data, int width, int height, std::string path, float scalef=1)
-{
-  std::fstream file(path.c_str(), std::ios::out | std::ios::binary);
-
-  std::string bands;
-  float fvalue;       // scale factor and temp value to hold pixel value
-  bands = "Pf";       // grayscale
-
-  // sign of scalefact indicates endianness, see pfm specs
-  if(isLittleEndian())
-  scalef = -scalef;
-
-  // insert header information 
-  file << bands   << "\n";
-  file << width   << " ";
-  file << height  << "\n";
-  file << scalef  << "\n";
-
-  if(bands == "Pf"){          // handle 1-band image 
-    for (int i=0; i < height; i++) {
-      for(int j=0; j < width; ++j){
-          fvalue = image_data[i * width + j];
-          file.write(reinterpret_cast<char *>(&fvalue), sizeof(fvalue));
-         }
-      }
-  }
-}
-
-/////////////////////////////////////////////////////////////////////////////////////////
-
 void callback(std_msgs::String  msg)
 {
   //ROS_INFO("I heard: [%s]", msg.data.c_str());
   syncStatus = msg.data.c_str();
 }
 
-////////////////////////////////////////////////////////////////////////////////////////
-/*k4a_result_t K4AROSDevice::ImageDepthRegistration(const k4a::capture& capture,std::string path)
+void skip_space(fstream& fileStream)
 {
-  const k4a::image k4a_depth_frame = capture.get_depth_image();
-  if (!k4a_depth_frame)
-  {
-    ROS_ERROR("no depth frame");
-    return K4A_RESULT_FAILED;
-  }
+    char c;
+    do {
+        c = fileStream.get();
+    } while (c == '\n' || c == ' ' || c == '\t' || c == '\r');
+    fileStream.unget();
+}
 
-  const k4a::image k4a_bgra_frame = capture.get_color_image();
-  if (!k4a_bgra_frame)
-  {
-    ROS_ERROR("no BGRA frame");
-    return K4A_RESULT_FAILED;
-  }
+int littleendian()
+{
+    int intval = 1;
+    uchar *uval = (uchar *)&intval;
+    return uval[0] == 1;
+}
 
-  // extrinsic transformation from depth to color camera
-  cv::Mat se3 = cv::Mat(3, 3, CV_32FC1, calibration_data_.k4a_calibration_.extrinsics[K4A_CALIBRATION_TYPE_DEPTH][K4A_CALIBRATION_TYPE_COLOR].rotation);
-  cv::Mat r_vec = cv::Mat(3, 1, CV_32FC1);
-  cv::Rodrigues(se3, r_vec);
-  cv::Mat t_vec = cv::Mat(3, 1, CV_32F, calibration_data_.k4a_calibration_.extrinsics[K4A_CALIBRATION_TYPE_COLOR][K4A_CALIBRATION_TYPE_DEPTH].translation);
+void swapBytes(float* fptr) { 
+	uchar* ptr = (uchar *) fptr;
+	uchar tmp = 0;
+	tmp = ptr[0]; ptr[0] = ptr[3]; ptr[3] = tmp;
+	tmp = ptr[1]; ptr[1] = ptr[2]; ptr[2] = tmp;
+}
 
-  // intrinsic parameters of the depth camera
-  k4a_calibration_intrinsic_parameters_t *intrinsics = &calibration_data_.k4a_calibration_.depth_camera_calibration.intrinsics.parameters;
-  
-
-  vector<float> _camera_matrix = { intrinsics->param.fx, 0.f, intrinsics->param.cx, 0.f, intrinsics->param.fy, intrinsics->param.cy, 0.f, 0.f, 1.f};
-  
-  // K matrix
-  cv::Mat camera_matrix = cv::Mat(3, 3, CV_32F, &_camera_matrix[0]);
+int ReadFilePFM(cv::Mat&im, std::string path){
 
 
-  vector<float> _dist_coeffs = {   intrinsics->param.k1, intrinsics->param.k2, intrinsics->param.p1,
-                                   intrinsics->param.p2, intrinsics->param.k3, intrinsics->param.k4,
-                                   intrinsics->param.k5, intrinsics->param.k6 };
-    // D vector
-  cv::Mat dist_coeffs = cv::Mat(8, 1, CV_32F, &_dist_coeffs[0]);
+    fstream file(path.c_str(), ios::in | ios::binary);
+    
+   
+    std::string bands;           // what type is the image   "Pf" = grayscale    (1-band)
+                          
+    int width, height;      // width and height of the image
+    float scalef, fvalue;   // scale factor and temp value to hold pixel value
+    cv::Vec3f vfvalue;          // temp value to hold 3-band pixel value
 
-  //vector<cv::Point2f> cv_points_2d(cv::points_3d.size());
-  cv::projectPoints();
-  
-  (*reinterpret_cast<vector<cv::Point3f> *>(&cv::points_3d),
-                  r_vec,
-                  t_vec,
-                  camera_matrix,
-                  dist_coeffs,
-                  cv_points_2d);
+    // extract header information, skips whitespace 
+    file >> bands;
+    file >> width;
+    file >> height;
+    file >> scalef;
+
+    // determine endianness 
+    int littleEndianFile = (scalef < 0);
+    int littleEndianMachine = littleendian();
+    int needSwap = (littleEndianFile != littleEndianMachine);
+
+    cout << setfill('=') << setw(19) << "=" << endl;
+    cout << "Reading image to pfm file: " << path << endl;
+    cout << "Little Endian?: "  << ((needSwap) ? "false" : "true")   << endl;
+    cout << "width: "           << width                             << endl;
+    cout << "height: "          << height                            << endl;
+    cout << "scale: "           << scalef                            << endl;
+
+    // skip SINGLE newline character after reading third arg
+    char c = file.get();
+    if (c == '\r')      // <cr> in some files before newline
+        c = file.get();
+    if (c != '\n') {
+        if (c == ' ' || c == '\t' || c == '\r'){
+            cout << "newline expected";
+            return -1;
+        }
+        else{
+        	cout << "whitespace expected";
+            return -1;
+        }
+    }
+    
+    if(bands == "Pf"){          // handle 1-band image 
+        cout << "Reading grayscale image (1-band)" << endl; 
+        cout << "Reading into CV_32FC1 image" << endl;
+        im = cv::Mat::zeros(height, width, CV_32FC1);
+        for (int i=height-1; i >= 0; --i) {
+            for(int j=0; j < width; ++j){
+                file.read((char*) &fvalue, sizeof(fvalue));
+                if(needSwap){
+                	swapBytes(&fvalue);
+                }
+                im.at<float>(i,j) = (float) fvalue;
+            }
+        }
+    }else if(bands == "PF"){    // handle 3-band image
+        cout << "Reading color image (3-band)" << endl;
+        cout << "Reading into CV_32FC3 image" << endl; 
+        im = cv::Mat::zeros(height, width, CV_32FC3);
+        for (int i=height-1; i >= 0; --i) {
+            for(int j=0; j < width; ++j){
+                file.read((char*) &vfvalue, sizeof(vfvalue));
+                if(needSwap){
+                	swapBytes(&vfvalue[0]);
+                	swapBytes(&vfvalue[1]);
+                	swapBytes(&vfvalue[2]);
+                }
+                im.at<cv::Vec3f>(i,j) = vfvalue;
+            }
+        }
+    }else{
+        cout << "unknown bands description";
+        return -1;
+    }
+    cout << setfill('=') << setw(19) << "=" << endl << endl;
+    return 0;
+}
+
+int WriteFilePFM(const cv::Mat &im, string path, float scalef=1/255.0){
 
 
+    fstream file(path.c_str(), ios::out | ios::binary);
 
-  cv::reprojectImageTo3D
-
-*/
-
-
-
-
-
-
-
+    
+    // init variables 
+    int type = im.type();
+    string bands;
+    int width = im.size().width, height = im.size().height;     // width and height of the image 
+    float fvalue;       // scale factor and temp value to hold pixel value
+    cv::Vec3f vfvalue;      // temp value to hold 3-band pixel value
 
 
+    switch(type){       // determine identifier string based on image type
+        case CV_32FC1:
+            bands = "Pf";   // grayscale
+            break;
+        case CV_32FC3:
+            bands = "PF";   // color
+            break;
+        default:
+            cout << "Unsupported image type, must be CV_32FC1 or CV_32FC3";
+            return -1;
+    }
 
+    // sign of scalefact indicates endianness, see pfms specs
+    if(littleendian())
+        scalef = -scalef;
 
-
-
-
-  // Transform color image into the depth camera frame:
-  
-  
-  
+    // insert header information 
+    file << bands   << "\n";
+    file << width   << "\n";
+    file << height  << "\n";
+    file << scalef  << "\n";
+    
+    if(bands == "Pf"){          // handle 1-band image 
+        for (int i=height-1; i >= 0; --i) {
+            for(int j=0; j < width; ++j){
+                fvalue = im.at<float>(i,j);
+                file.write((char*) &fvalue, sizeof(fvalue));
+                
+            }
+        }
+    }else if(bands == "PF"){    // handle 3-band image
+        for (int i=height-1; i >= 0; --i) {
+            for(int j=0; j < width; ++j){
+                vfvalue = im.at<cv::Vec3f>(i,j);
+                file.write((char*) &vfvalue, sizeof(vfvalue));
+            }
+        }
+    }else{
+        return -1;
+    }
+    return 0;
+}

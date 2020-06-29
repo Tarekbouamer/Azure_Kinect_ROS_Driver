@@ -76,6 +76,8 @@ public:
 
   void getRgbCameraInfo(sensor_msgs::CameraInfo& camera_info);
 
+  k4a_result_t saveCameraCalibration(k4a_calibration_t CalibData,  std::string path );
+
   k4a_result_t getDepthFrame(const k4a::capture& capture, sensor_msgs::ImagePtr& depth_frame,
                             std::string path , bool rectified);
 
@@ -219,8 +221,9 @@ bool saveRbgFrame(k4a::image& k4a_frame, const std::string path);
 bool saveIrFrame(k4a::image& k4a_frame, const std::string path);
 
 
-int readFilePFM(const std::string filename, cv::Mat& im);
-int writeFilePFM(const std::string filename, const cv::Mat &im, float scalef);
+int ReadFilePFM(cv::Mat &im, std::string path);
+int WriteFilePFM(const cv::Mat &im, std::string path, float scalef);
+
 
 //#######################################################
 

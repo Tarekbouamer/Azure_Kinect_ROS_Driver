@@ -24,10 +24,10 @@ def stop_cam(camera_list):
 
 
 def launch_cam(uuid, name, sn, sync):
-    camera = ['/home/tarek/workspaces/ros/azure_ws/src/Azure_Kinect_ROS_Driver/launch/record.launch',
+    camera = ['/home/tarek/workspaces/ros_ws/src/Azure_Kinect_ROS_Driver/launch/record.launch',
                'file_name:='+str(name),
                'sensor_sn:='+str(sn),
-               'recording_folder:=/home/tarek/K4a_data/'+str(name)+'.mkv',
+               'recording_folder:=/media/tarek/c0f263ed-e006-443e-8f2a-5860fecd27b5/k4a_data/'+str(name)+'.mkv',
                'wired_sync_mode:='+str(sync)
                 ]
     _file = roslaunch.rlutil.resolve_launch_arguments(camera)[0]
@@ -77,15 +77,15 @@ def main():
 
     status = "record"
     pub.publish(status)
-    rospy.sleep(10)
+    rospy.sleep(30)
 
     status = "stop"
     pub.publish(status)
-    rospy.sleep(5)
+    rospy.sleep(0)
 
     status = "record"
     pub.publish(status)
-    rospy.sleep(10)
+    rospy.sleep(30)
 
     status = "stop"
     pub.publish(status)

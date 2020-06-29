@@ -28,11 +28,11 @@ def stop_cam(camera_list):
 
 
 def launch_cam(uuid, name, sn, sync, cam_folder):
-    camera = ['/home/tarek/workspaces/ros/azure_ws/src/Azure_Kinect_ROS_Driver/launch/playback.launch',
+    camera = ['/home/tarek/workspaces/ros_ws/src/Azure_Kinect_ROS_Driver/launch/playback.launch',
                'file_name:='+str(name),
                'sensor_sn:='+str(sn),
                'recording_folder:='+str(cam_folder),
-               'recording_file:=/home/tarek/K4a_data/'+str(name)+'.mkv',
+               'recording_file:=/media/tarek/c0f263ed-e006-443e-8f2a-5860fecd27b5/k4a_data/'+str(name)+'.mkv',
                'wired_sync_mode:='+str(sync)
               ]
     _file = roslaunch.rlutil.resolve_launch_arguments(camera)[0]
@@ -44,18 +44,36 @@ def launch_cam(uuid, name, sn, sync, cam_folder):
 
 def delete_files(p):
     f_list = [os.path.basename(x) for x in glob.glob(p + '*')]
-    print(f_list)
+    #print(f_list)
     for f in f_list:
         if os.path.isfile(p+f):
             os.remove(p+f)
         elif os.path.isdir(p+f):
             shutil.rmtree(p+f)
 
+
+def calib_file(path):
+    calib = [os.path.basename(x) for x in glob.glob(path + '*.txt')]
+    calib_dir = path + '/calib/'
+    if not os.path.isdir(calib_dir):
+        os.mkdir(calib_dir)
+
+    new_name = 'calibration.txt'
+    for f in calib:
+        src = path + f
+        dst = path + new_name
+        os.rename(src, dst)
+
+    shutil.move (dst, calib_dir)
+    
+    
+
+
 def cluster_files(path):
 
     Depth_list = [os.path.basename(x) for x in glob.glob(path + '*_Depth.png')]
     Depth_pfm_list = [os.path.basename(x) for x in glob.glob(path + '*_Depth.pfm')]
-    Depth_Vis_list = [os.path.basename(x) for x in glob.glob(path + '*_Depth_Vis.png')]
+    #Depth_Vis_list = [os.path.basename(x) for x in glob.glob(path + '*_Depth_Vis.png')]
 
     RGB_list = [os.path.basename(x) for x in glob.glob(path + '*_RGB.png')]
     IR_list = [os.path.basename(x) for x in glob.glob(path + '*_IR.png')]
@@ -84,10 +102,10 @@ def cluster_files(path):
     delete_files(ir_pth)
     delete_files(registed_pth)
 
-    for dp, df, dv, rgb, ir in zip(Depth_list, Depth_pfm_list, Depth_Vis_list, RGB_list, IR_list):
+    for dp, df, rgb, ir in zip(Depth_list, Depth_pfm_list, RGB_list, IR_list):
         shutil.move(path + dp, depth_pth)
         shutil.move(path + df, depth_pth)
-        shutil.move(path + dv, depth_pth)
+        #shutil.move(path + dv, depth_pth)
 
         shutil.move(path + rgb, image_pth)
         shutil.move(path + ir, ir_pth)
@@ -95,24 +113,62 @@ def cluster_files(path):
     for reg in Registed_list:
         shutil.move(path + reg, registed_pth)
 
+    rename(depth_pth)
+    rename(image_pth)
+    rename(ir_pth)
+    rename(registed_pth)
+
+
+def rename(path):
+    _list_png = [os.path.basename(x) for x in glob.glob(path + '*.png')]
+    _list_pfm = [os.path.basename(x) for x in glob.glob(path + '*.pfm')]
+
+    _list_png.sort()
+    _list_pfm.sort()
+    print(_list_png)
+    base = 1000000000000000000
+
+    for png in _list_png:
+        _ , ext = png.split(".p")
+        new_name = str(base) + '.p' + ext
+
+        src = path + png
+        dst = path + new_name
+
+        os.rename(src, dst)
+        base += 200000000
+
+
+    base = 1000000000000000000
+    for pfm in _list_pfm:
+        _ , ext = pfm.split(".p")
+        new_name = str(base) + '.p' + ext
+
+        src = path + pfm
+        dst = path + new_name
+
+        os.rename(src, dst)
+        base += 200000000
 
 
 def main():
     experiment = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     print(experiment)
 
-    path = '/home/tarek/K4a_data/'
+    path = '/media/tarek/c0f263ed-e006-443e-8f2a-5860fecd27b5/k4a_data/'
 
-    cam1_list = [os.path.basename(x) for x in glob.glob('/home/tarek/K4a_data/cam1_*')]
+    cam1_list = [os.path.basename(x) for x in glob.glob(path + '/cam1_*')]
     cam1_list.sort()
 
-    cam2_list = [os.path.basename(x) for x in glob.glob('/home/tarek/K4a_data/cam2_*')]
+    cam2_list = [os.path.basename(x) for x in glob.glob(path + '/cam2_*')]
     cam2_list.sort()
 
-    print(cam1_list)
-    print(cam2_list)
+    #print(cam1_list)
+    #print(cam2_list)
 
     for name1, name2 in zip(cam1_list, cam2_list):
+
+        path = '/media/tarek/c0f263ed-e006-443e-8f2a-5860fecd27b5/k4a_data/'
 
         name1, _ = name1.split(".")
         cam1_name, cam1_date, cam1_time = name1.split("_")
@@ -170,22 +226,17 @@ def main():
 
         print("\n Files extraction ...")
 
-        rospy.sleep(40)
+        rospy.sleep(70)
 
         status = "stop"
         pub.publish(status)
         rospy.sleep(5)
 
+        calib_file(path1)
+        calib_file(path2)
+
         cluster_files(path1)
         cluster_files(path2)
-
-        #rename_files(path1)
-        #rename_files(path2)
-
-
-
-
-
 
     signal.signal(signal.SIGINT, signal_handler(cam1, cam2))
 
